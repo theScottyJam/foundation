@@ -1,0 +1,22 @@
+-- polymorphism --
+
+These are old polymorphic design notes. I don't plan on including polymorphic capabilities in the core language anymore as there's always a work-around. I would like to look into adding it more as a macro later on though. See §P2dac for more discussion on this topic.
+
+The plan was to require you to explicitly convert from one class to another, e.g. myValue->Iterable. A value would define how to convert from one to the other.
+
+Future: Support conditional interfaces - e.g. the list can be cloned if its contents can be cloned. I'd need to better define the type system before I can figure out how to support this. It'll probably require using the "qualities" system, where I'm not allowed to use the transformation unless I can show the value exhibits a specific quality. The same thing should apply to normal methods - some are conditionally available depending on the value's qualities.
+
+It is useful to be able to allow the creator of a new polymorphic question to define answers for existing values. Since polymorphic questions are achieved through translating between classes, this means there needs to be a standard way to associate a value of one type to a value of another. From there, it's not too hard to let the language do automatic translation for you.
+* However, if the language does support automatic translation, it will only be one layer deep. If "YourThing" translates to "Comparable" which translates to "SupportsEquality", that doesn't mean "YourThing" will auto-translate to "SupportsEquality" (unless I add support for "Comparable" to say that "SupportsEquality" is transitive - it'll be automatically inherited by anyone implementing Comparable - either that or I let YourValue say it wants to automatically receive stuff from Comparable explicitly). Same with methods - I, perhaps, could provide a way for YourValue to say a particular method should be transitive - available on both instances so no direct translation is required before using it. Some tinkering will be needed - I'll probably start restrictive and add slack where needed.
+* TODO: This also requires the ability to say that a value is an instanceof a particular class, so we can let others explain how to translate to that class instance.
+
+It's interesting to note that in most cases, getting to your desired behavior is a two step process. First, convert to the trait class, then call the (usually) single method on it. myValue->repr.toString, myValue->Iterable.create(), myValue->Clonable.clone(), etc.
+  The extra step could be avoided if the trait instances were callable. Then it's not that bad compared to what was done before. myValue->Repr(), myValue->Iter(), myValue->Clone(), etc.
+  Things are callable when there's an obvious main function for them to take.
+  They're verb-classes because they're all about exposing an single main action (which is also why they tend to be callable).
+
+For now, there's no plans to make property access or being callable into traits.
+  With regards to proxies, I won't support them. When the project becomes more mature, I may need to reconsider (and that may require some deep changes). But a number of their use-cases seem like they could be difficult to handle with type-safety and could potentially be achieved through other means.
+  Without proxy (or getter/setter syntax support), there's no real need to make property access anything special. It can just be native syntax. Someone can always invent new syntax if they want property-access-like behavior but with more control (though if it looks like there's a good general way to invent such syntax, I might want to reconsider my approach and see if I can define the core language in terms of it).
+
+Idea abandoned because it adds a lot of complexity and difficult-to-resolve edge cases without solving too much.

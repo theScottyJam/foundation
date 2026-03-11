@@ -1,0 +1,180 @@
+-- Protocol strategy ideas
+
+// Example function definition
+let true = new {
+  true[doCall](ifTrue, ifFalse) { ifTrue }
+  true[doTrue]() { true }
+}
+
+// Example function call
+true[doCall](ifTrue, ifFalse)
+true(ifTrue, ifFalse) // Syntax shorthand that means the same thing
+
+// Example protocol definition
+type <true>[#self](<...>, <...>) -> ... // Provides a type definition for the protocol. Everyone must obey it that implements it.
+let doBranch = new {
+  #self[doCall](...) { ... } // Example of adding behaviors to the protocol - it's pretty rare to actually do this on these symbols.
+
+  // Examples of applying this protocol to existing functions
+  true[#self](ifTrue, ifFalse) { ifTrue }
+  false[#self](ifTrue, ifFalse) { ifFalse }
+  ...[#self] // allows other values to attach this protocol later as they're being defined. (though maybe I should find a way to do this with type syntax instead)
+}
+
+// Function definition shorthand
+let true = fn(ifTrue, ifFalse) { ifTrue }
+
+// Some helpers
+stdHasProtocol(fn, symbol, ifTrue, ifFalse)
+
+// (If you attempt to call a function protocol that doesn't actually exist, an error will be thrown)
+// Eventually: I may want the ability to prevent someone from detecting if a value implements a protocol in certain scenarios. It's the "unknown" vs "undiscoverable" issue - I might have a value that I want the type system to actively prevent me from discovering information about it other than what I already know.
+
+
+---------------------- QUESTIONS:
+* Can I implement the same numeric system using this strategy? Can I, with the type system, tell the difference between zero and strictly positive numbers?
+* As currently defined, you can only define closed protocols on already-known objects. There should be a way to define them on a "stamp", and then use that stamp to stamp existing values. (e.g. classes). This would help with the first issue of being able to add protocols to all non-zero numbers, assuming the function to build those is already defined.
+* I don't yet have a way to do identity comparisons with this system. How do I want to implement that? Perhaps it could be as simple as #idCmp being made available as a local variable inside of #new(), and it can expose it if it wants the outside world to be able to id-compare as well. Protocols stamps need this ability too - to check if a value is an instance of the stamp (should stamps be runtime values, not just type-check-time artifacts?).
+* Here is my current true/false definition
+
+type true[stdIsTrueSymbol]() -> #never
+let true = new {
+  #self[stdIsTrueSymbol]() { stdThrow() }
+}
+
+type true[boolBranch](<true> ##T, <true>) -> check($, is##T) // <-- ??
+type false[boolBranch](<true>, <true> ##T) -> check($, is##T) // <-- ??
+let boolBranch = new {
+  true[boolBranch](ifTrue, ifFalse) { ifTrue }
+  false[boolBranch](ifTrue, ifFalse) { ifFalse }
+}
+
+How should I handle the type-checking for the `// <-- ??` pieces? (This might depend on answers to earlier questions)
+
+
+
+~~~
+
+How to type-check the is#XXX functions?
+
+
+
+
+
+Future:
+  type-check TDZ (cycle detection)
+  Termination checking
+
+Explore:
+  I'm currently implementing #XX tags with is#XX functions, letting any given function have a unique identity that can be compared. Alternatively, I could look into making unique symbols a native feature - something like `let isNumber = stdCreateSymbol() /* or some kind of syntax here */; isNumber(isNumber) -> true; isNumber(anythingElse) -> false`. It might be difficult to build the type system around that though.
+  I could consider requiring the first parameter in a function call to always be a symbol. By default, when defining or calling functions, a special "call" symbol is used, but other symbols can also be used, such as "property access", or any arbitrary protocol. The type system would enforce that the first parameter is always a symbol. The core language would provide syntax-surger to make this easier to handle.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- Rough draft of program I eventually want to implement
+
+let isBool = fn (b: true): or(is#true(b), is#false(b)) { or(is#true(b), is#false(b)) }
+let none = fn #none (_: never): never { never }
+let 0 = fn #zero (_: never): never { never }
+
+type suc(_: isNat($)) -> and(isNat($), INFER)
+type suc(_: isEven($)) -> isOdd($)
+type suc(_: isOdd($)) -> isEven($)
+let suc = fn suc (n) {
+  type (_: and(is#nonZero($), isEven($)))(none) -> isOdd($)
+  type (_: and(is#nonZero($), isOdd($)))(none) -> isEven($)
+  in fn #nonZero (x: is#none($)): isValue($, n) {
+    n
+  }
+}
+
+let 1 = suc(0)
+let 2 = suc(1)
+let 3 = suc(2)
+let isNat = fn (n: true): isBool($) { or(is#zero(n), is#nonZero(n)) }
+
+type add(_: isEven($), _: isEven($)) -> isEven($)
+type add(_: isEven($), _: isOdd($)) -> isOdd($)
+let add = fn add (n: isNat($), m: isNat($)): isNat($) {
+  if(
+    is#zero(m),
+    n,
+    suc(add(n, m(none)))
+  )
+}
+
+let isEven = fn (n: isNat($)): isBool($) { or(
+  is#zero(n),
+  isOdd(n(none)),
+) }
+let isOdd = fn (n: isNat($)): isBool($) { and(
+  not(is#zero(n)),
+  isEven(n(none)),
+) }
+
+let add2 = fn(n: isEven($)): isEven($) { suc(suc(n)) }
+
+in { log(add2(0)) }
+
+
+
+
+
+
+
+
+
+
+
+
+
+~~~~~~~~~~ Old notes
+
+
+let numbEqualsItself = fact(fn (n) { then(isNat(n), eq(n, n)) })
+  |> ...
+
+-- A built-in ast() function returns the ast of any expression. Tools are provided to walk the AST, inspect, and built a new AST tree, then run it.
+
+astEquivalent(a : AstNode($), b : AstNode($)) -- asserts the two are the exact same - useful for showing how a macro expands.
+astGetType(x : AstNode($)) -> FnDef, FnCall, BoundVar, or UnboundVar
+astGetVarId(x: BoundVar($) or UnboundVar($)) -> unique marker
+astGetParamId(x : FnDef($)) -> unique marker
+astGetBody(x : FnDef($)) -> AstNode
+... // Get callee and arg when doing function calls, a way to get the value of a bound var, etc.
+
+A proof engine is provided, but you could theoretically build and use your own. You wrap an expression in fact(), then utilize some core functions to safetly transform the AST until you can show that it is true. Some examples:
+
+astSwapWithImplementation(x : BoundVar($) and var points to fn) -- Swaps the function with the real implementation. Returns a modified AST tree - if a child was modified, a root will still be returned.
+astSimplify(...) ...
+etc
+
+Even higher level functions could be built on these ones.
+
+let add =
+  type(
+    // Type signature
+    fn (x, y, res) { and(isNat(x), isNat(y), isNat(res)) },
+    // because...
+    ,
+    // Actual function
+    fn (x, y) { ... }
+  )
+
+type() wraps the incoming function like a decorator. It's mostly a pass-through, but it does allow the type-checker to introspect the function body to see what quality has been proven about it.

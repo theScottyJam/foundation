@@ -1,0 +1,535 @@
+This file was copy-pasted from `_nocommit concept2.txt`.
+It's started out as pretty much the same, but anything polymorphic/trait-related was removed.
+----------
+
+
+
+
+~~~ goal ~~~
+
+Goal (for now):
+* Find a minimal set of syntax to make the language work
+* Don't require users to use cryptic patterns to accomplish goals. For example, "lambda calculus" isn't a valid solution because you need some kind of church-encoding to make it work. The end result still needs to feel like straight-forward code, not something to be deciphered.
+* In a similar vein, this is supposed to be the kernel of a language, not a compilation target. Ideally, something of this kernel will always be visible in the end result when the std lib/syntax has been built on top of it.
+* Avoid stuff that could be easily considered as syntax surger. Wait until I've got custom syntax and macros figured out to handle those instead.
+  (I'm fine with a couple of these kinds of features to temporarily have in the core until I've got the macro system figured out, as long as they're documented as such)
+* Basically, I'm trying to condense the most useful, general-purpose patterns into a simple language.
+* Each feature should feel like they're the obvious answer to the problem. If they aren't, keep working on the feature, or adjust these sets of goals so that they are.
+
+~~~ decision log ~~~
+
+A value is something you can ask questions to and get answers from.
+- such as accessing and calling various different function properties on an object in other languages.
+
+
+- ON POLYMORPHISM -
+
+Support for polymorphism will be extremely limited in the current iteration. This is mostly because of the "one obvious way to do things" principle, and there's usually another way to accomplish the same thing without polymorphism.
+
+Typically, polymorphism is implemented via interfaces or traits. If we wanted polymorphism, we would want all of the following behaviors:
+* automatic addition of helper functions (like inheritance and probably traits can do)
+* name clash avoidance (so you can implement multiple, separate traits maintained by different parties)
+* Some methods provided by traits should be private - only the package with the trait would be allowed to call them. (e.g. maybe you don't want people to be allowed to call the provided iter() method directly, they have to use the for loop your package provides).
+* This in turn means the strategy pattern needs to be supported, where you supply behaviors to the trait/interface and it generates the required methods that conform to an interface.
+
+Put together, this is basically what classes already give us. For example, instead of a "iterable" trait or protocol that classes can conform to, have an Iterable class. Anyone who wants to implement "iterable" would instead provide an "iter" method that returns an instance of the Iterable class.
+
+Future: This isn't a perfect solution - it's a little more verbose at the usage sight, and people would generally want to name their "iter()" method the same thing across the board but there's nothing to enforce that - though in some cases you might want to have multiple iter methods on the same class which wouldn't be as intuitive to do with an iterator protocol. But due to how rare traits are actually needed in practice, and how they're mostly used to implement language-level features, this may work good enough. See §P2dac for more details on abandoned ideas related to polymorphism, that perhaps could have been used to improve upon this issue, but would have added a lot of complexity and edge-cases.
+
+I've been noticing one hole with error-handling and unions. Basically, I'd like the ability to have a union of errors where I can pick out a single error from the union (e.g. via an instanceof check), then in the future, I should be able to split that single error type up into multiple sub-errors without it being a breaking change. Then, the instanceof check would bring me to the error group and let me access properties common among that group, but I can continue drilling down further with more instanceof checks. As far as I can tell, this behavior would require some degree of polymorphism, and I've been toying with mixins and interfaces to accomplish it.
+
+
+
+
+
+
+- Misc Conclusions: -
+
+On nominal typing:
+  For now, everything is going to be nominally typed, not structurally typed - it helps avoid accidents. So if you want to create something of a certain brand, you're required to specify what that brand is - either that, or be passing it into a function where, from context, the desired brand is obvious. Within a brand, one can also determine certain "qualities" about the particular instance.
+  The problem with structural typing: Structural typing automatically has polymorphism. If you have a record of one shape and are trying to assign it to something structurally typed, if it at least conforms to that structure, it works. This creates problems with maintainability though. If the caller wants to add extra properties to the record, that shouldn't break the receiver, and if the receiver wants to allow additional optional properties that shouldn't break the caller, and yet, the two could happen to use the same name and get an unexpected breaking change. That's just talking about records, but the same issue exists with functions - this is explored more in the "On function interfaces" below, but the idea's the same - you provide a callback and decide to allow it to receive an optional extra parameter, and the receiver decides to supply an optional extra parameter, and things can break.
+  The only time structural typing may be permitted is when the caller opts into it - the caller declares they won't ever provide anything extra. This opt-in could happen automatically whenever the caller is providing a literal directly into a function. (Not sure if this really counts as structural typing - in this document, I call it "behavior types" or an "open-construction type")
+
+On function interfaces:
+  It should not be a breaking change to have a function accept a new optional parameter. It should also not be a breaking change to provide a callback with additional information.
+  Put together, this means you can't simply do things like `array.map(someValue.someMethod)`. `.map()` providing new info and `.someMethod()` accepting new parameters at the same time could cause unexpected changes in behavior, breaking this code. Instead, you must do `array.map(x => someValue.someMethod(x))` - the lambda at that location would understand, from context, the signature it's conforming to - for lambdas like that, it _is_ a breaking change to accept new optional parameters, in fact, you wouldn't be allowed to accept any parameters that `.map()` doesn't provide. The other option is if `someValue.someMethod` conformed to the same interface that `array.map()` expects (though since I removed the concept of traits, this would only happen if the method was explicitly defined to conform to the array.map callback, and you can only pick one thing to conform to).
+  Put together, this makes the ability to pluck methods from objects less valuable in this language compared to other ones, since you're typically not allowed to polymorphically use those methods.
+
+On unions:
+* For now, all union variants must be nominally typed. See "behavior typed union variant notes" below.
+* The type system does not allow you to do instanceof checks on unrelated types (e.g. `x: Number = 2; return x instanceof String`). This means taking out union variants is considered a breaking change (something discussed more in another file). AST transformations can help mitigate the issue.
+  * The problem with allowing arbitrary `instanceof` checks is 1. It makes open unions (discussed later) near meaningless, since anything could be added _or_ removed, and 2. it removes a fair amount of type safety. Plus, it's weird for a library to leave your codebase with dead code after deciding to remove union variants.
+* For now, unions can't be used polymorphically. You must first distinguish which union variant you have, then call methods on that specific variant.
+* Assigning something of type `A | B` to `A | B | C` will be considered legal (as would `A` to `A | B`, which would be a more common occurrence)
+
+On open unions (EXPERIMENTAL):
+Unions can be defined to be open-ended, meaning if you have `A | B | C | ...` (`...` meaning more may be added later), then even if the consumer explicitly handled A, B, and C, they still need to leave a code path for unknown future variants. This allows the producer to add new variants without it being a breaking change. These kinds of unions can have one variant, or maybe even zero variants?
+FURTHER CONSIDERATIONS:
+* If a union is open-ended, it means you can add new variants without it being a breaking change, but perhaps I will make it so removing variants is a breaking change. I could make it so doing `instanceof` checks on unrelated types isn't permitted with open-ended unions.
+  - This is desirable, because without it, an end-user could do `instanceof String` and provide a code-path for strings, even if that's not part of the union. Then if strings are latter added to the union, their code path would run and could break things. (This would be one of the few places where a "safe" change could actually break code, the language has avoided most other scenarios like this).
+  - Even if the removal of variants is considered breaking, the same kind of "whoops, it broke the code" behavior could still happen - consider the fact that the `...` "variant" may map to a code path that never executes until you add a new variant - if that code path was poorly written, then the addition of the new variant could still break the client's code.
+    // TODO: The previous point is actually pretty concerning to me. Are there ways I could force the "..."-handling code paths to work ok, or something?
+  - If we do allow arbitrary instanceof checks to happen on open-ended unions, then does the content of the union loose meaning? What is the tangible difference between `A | B | ...` vs simply `...` (an open-ended union with non variants)?
+* You shouldn't be allowed to assign `A | B | C` to `A | B | ...`? The point of open-ended unions is to require consumers to leave room for you to add new variants, but if you actually want new variants, you would still have to explicitly state it in the union - you can't "sneak" union variants into the type. If this assignment were allowed, then literally anything could be assigned to the type `A | B | ...`, which seems bug-prone.
+FOR NOW: Due to my `// TODO:` comment above, open-ended unions are a little concerning to me. I'd like to find some concrete use-cases before I design this further.
+* Another issue with the current design of open unions - you may wish to restrict what you're open to - e.g. maybe you can always add new error variants to the union, but you might not want to allow any other kind of object to be arbitrarily added to the union.
+
+behavior typed union variant notes (i.e. how we could add support for it, if we ever wanted to, and some of the pitfalls around it):
+* If a behavior type is used in a union variant, then as normal, the user can't create something conforming to that variant unless they opt into it (by assigning to the union directly).
+* You're allowed at most one behavior type in a union, and you can't use that behavior type unless you've proved the value isn't any of the nominal types.
+  - Allowing multiple behavior types gets a little messy - it means they have to have a common "type"-like property to let you distinguish them, where the values are compared via equality, or perhaps instanceof. There's a large number of ways the language could support behavior-type distinguishing. But in the end, if the variants all have some kind of "type" property, it probably makes more sense to have the end-user do `myUnion: MyUnion = MyUniqueType.new(...the behavior type...)` instead of `myUnion: MyUnion = { type: "MyUniqueType", ...rest of the behavior type... }`.
+
+- Future considerations -
+(Things I don't plan on doing in the first iteration, but I should come back to consider more later)
+
+Should property access simply be shorthand for calling a function, where the first argument is the property name? Now that I don't plan on supporting traits in the core or supporting callable objects, it opens up the option. This would allow `value { ... }` syntax to simply be syntax sugar for defining a function, and perhaps it could be defined as a macro instead of being in the core.
+* The main issue is that, if property access translates to function calls, you may loose some guarantees. For example, can the editor help you know what properties are available if they could be dynamically created for you? Do I want to allow dynamically created properties? Could property-access throw errors? The property-access could be slower than expected if it does something expensive. I could, at least, require that the function be pure before you can use the property-access syntax on it, so no side-effects are performed, and so a given input always produces a given output.
+
+--------
+
+/*
+Future:
+* Should I provide a syntax shorthand for defining struct-like values - where you simply want to export the information provided in the constructor? (For now I won't worry about it, syntax surger might solve the problem)
+* I need to eventually specify optional and named parameters for a function. Is there a way to make it so function parameter lists are really just a single value of a special type or something?
+* I require a "." to be before every member in a value definition. Perhaps I could simplify and let the "." be omitted. For now I'll keep it.
+* I, perhaps, don't want to allow making any arbitrary thing callable, only functions, and if it's a function, it can't have (additional?) properties. Reason being - the only reason people make arbitrary values callable is for aesthetics, by forbidding it, there's less bike-shedding decisions when designing an API.
+
+Ways to define values:
+- class XX
+- new XX
+- struct XX
+- value XX // TODO: I'm not sure if there's ever a reason to dynamically create multiple of these (you would use a class and instance instead), which means these might only be useful as modules, so I could call the syntax "module" instead.
+Future: Can I make these syntax sugars of each other? I've figured it out for `class` and `new` - still need to figure it out for `struct`.
+
+Values can have these "traits" to them.
+* They can be callable
+* They can be options bags - i.e. have various properties you can access
+* They can have a brand - allowing them to be used after a colon as a type.
+  - note on terminology: "be/have a brand" means it can be used as a type. "branded/branding" means it's a value that satisfies the brand.
+If a value is callable, then it can't also be an options bag or be a brand, but that may change.
+
+*/
+
+// Defines a value, with these behaviors:
+//   - You must do `new XXX` somewhere in the class definition (exactly once).
+//   - MyNumber will be treated as a brand, to let you type-check instances.
+//   - Classes are given referential identity. Not overly useful, but it's a consequence of them being a brand. See §WG6WD.
+//   - A scoped variable `Class` is exposed that references this value, which can be used like "static" in other languages.
+//   - A scoped variable `Local` is also exposed that references this value, which can be used like "private" in other languages.
+//     The difference is that if you place a sub-value inside the class (using the `value` keyword),
+//     the sub-value would redefine `Local` but it wouldn't redefine `Class`.
+//   Naming convention: Classes should start with an upper case letter.
+class MyNumber {
+  // Same as doing `Global Class.sum = ...` - i.e. you can explicitly tack on the "Class" local variable,
+  // but you don't have to - it's optional.
+  // `Global` represents an auto-created value that encompasses everything.
+  Global .sum = (a: MyNumber, b: MyNumber) => {
+    return a.value() + b.value();
+  }
+
+  // Future: Don't love how I'm both using private members and closed over "value" - both are available to all functions.
+  //   I'll eventually want to find a syntax surger that prevents you from using values from the scope directly above, or something.
+  //
+  // Using `new Class` (or `new MyNumber`) is another way to define a value. It does the following:
+  //   - Automatically registers a scoped variable `self` to refer to itself.
+  //   - Makes `self` have the `MyNumber` type.
+  //   - It does not provide a definition for `Local` - this means `Local` will still continue to refer to the class.
+  Global .new = (value: Number) => new Class {
+    // This variable is private to MyNumber
+    MyNumber .value = () => {
+      return value;
+    }
+
+    // An example of a local helper.
+    // (This is the same as using `MyNumber .addWithOther = ...`)
+    // I could eventually make it so the `Local` is optional - if omitted, it's implied. For now, I'll require it.
+    // TODO: Consider other names for "Local" - it's a bit misleading - it's more "local" than "global", but it's not as
+    //   local as possible, as the instance scope would be even more local. Though, it does use upper-case naming
+    //   convention implying it's a class.
+    Local .addWithOther = (other: MyNumber) => {
+      // Because `Local` refers to the class instead of the instance,
+      // static class methods are able to access the variable,
+      // and (shown here) one instance can access this function from another instance.
+      return self.value() + other.value();
+    }
+  }
+
+  Global .Tools = value {
+    Local .helper = ...;
+
+    // You're allowed to assign to an arbitrary higher-up value.
+    // But this is only valid if this code is guaranteed to execute exactly once
+    // during the higher-up's value definition.
+    // (So, for example, this can't happen inside of the new function, as that's not guaranteed to run during definition)
+    Global MyNumber.myMethod = (...) => { ... }
+  }
+
+  // (Not sure if I'll keep this, but I'll use it for now)
+  // Special "(new class)" syntax is valid within a class definition.
+  // (alternatively, `(new MyNumber)` means the same).
+  // This code will run on every instance, providing the method to the instance.
+  // It's not as powerful, because it won't have access to function-local variables provided by the new function.
+  (new class).anotherFn = (...) => { ... }
+}
+
+// Classes are syntax sugar. This is how you would define them without the class syntax.
+// (The prefix "identifiable" is discussed further down)
+identifiable value MyNumber {
+  Local .Class = MyNumber;
+
+  ...
+
+  Global .new = (value: Number) => {
+    let $local = Local;
+    return value {
+      Local .self = Local;
+      // Overrides what `Local` refers to.
+      // After this point, using `Local` for an access modifier means something else.
+      // Future: This is ugly and probably not actually possible - it would be better if
+      //   there was a way to define a value without introducing a local variable.
+      Local .Local = $local;
+
+      // Adding a new property on MyNumber.
+      // We're dealing with types in this line, so it runs during the type-execution phase,
+      // so it satisfies the condition of running exactly once during MyNumber's definition,
+      // which is why we're allowed to attach a new property to MyNumber.
+      //
+      // The `typeof` keyword can be used to extract the brand of a value.
+      // (If you never use typeof, the brand would be completely inaccessible)
+      // typeof can only be used inside the value's definition.
+      // Brands are (currently) not first-class things that can be moved around - they always
+      // need a host value, so doing `typeof` would produce a host value that contains the brand.
+      // What this means is that it's valid to use the result as a brand, e.g.
+      //   let xx: Class.$interface = ...; is valid code.
+      // (Either that, or it doesn't even produce a value, just a type - I'm still not sure how the type system will work).
+      //
+      // TODO: What is the type of `Class.$interface`? Is it legal to try and add a `: ...` to define the type?
+      // Is this a special case because we're in type-land, not runtime-land?
+      Class Class.$interface = typeof self;
+
+      ...
+    };
+  }
+
+  // Causes `MyNumber` to adopt the `$interface` brand.
+  // `of` syntax is discussed further down.
+  of $interface;
+
+  ...
+}
+
+// FUTURE: Are structs syntax surger as well?
+
+// At runtime you're allowed to check if a variable is an instance of a class with this built-in function.
+// In other places, I sometimes refer to this check as "instanceof" - it means the same.
+// Future: Right now I'm putting it under a globally-available StdLib namespace, not sure if I'll keep it that way.
+//   Or maybe I'd be able to find some way to derive this function from syntax - none of the current syntax would allow that though.
+//   Or maybe all classes could automatically receive an isInstance static function, and they keep track of their own instances in, I guess a weak-set of some sort?
+//   If I must have built-in functions like this, I might consider having a separate namespace for the required functions, and a namespace for nice-to-have
+//   utilities that are built up from existing language constructs. The nice-to-have utilities could include the must-haves as well (though that would be a form of inheritance, even if I manually copy them over).
+StdLib.isInstance(x, MyNumber)
+
+// Defines a value with these behaviors:
+//   - A scoped variable `Local` is exposed that references this value.
+//   Naming convention: values defined with `value` should start with an upper case letter. (TODO: This is subject to change - should upper-case letters denote a static namespace (what it currently does), or should it denote that something can be treated as a type (so only use it on classes and values with brands)?)
+// Note that the use of `of` inside requires us to make this value identifiable. See §WG6WD.
+Global .ExpectationFn = identifiable value {
+  // This is the other way to turn a value into a brand.
+  // (Can only be used on non-classes)
+  // After `type` comes a value that hosts a brand.
+  // The new value being defined will adopt the brand found in the value after `of`.
+  // (The bit after `of` is computed at type-check time, so the value's brand has to be statically available).
+  //
+  // After `of` must be a brand - either one defined inline via `type`, or one found by doing a `typeof` check on a value.
+  //
+  // Future: Should branding be scoped? So I also add, e.g. `Global` or `Local` before the `of`. If you're out of scope, you can still use the
+  //   value for other things, but you can't use it as a type anymore. This seems reasonable, but I'd need to figure out use-cases.
+  of type (x: string) => boolean
+}
+// Note, in a function signature, after the colon, you can also do `type (x: string) => boolean` - it has the same effect.
+
+// An open-construction type (behavior type) doesn't have a brand by default.
+// This means making an identity function that just returns the open-construction type (e.g. `(x: type ...) => x`)
+// is not too different from a function that returns a bare value `value { ... }` - in both cases,
+// the end-user can grab the value and use it, but the only way they can pass it
+// around and such is by using `ref ReturnType<...>` to reference the type.
+//
+// An open-construction type can be shared. You can do `Global .myType = type ...`, then use `myType` as function parameters
+// in multiple places. However, since it's doesn't have a brand by default, you can't pass in an instance of the
+// constructable type to another function that expects the same constructable type as a parameter,
+// that still violates the "no type change" policy (They might be using type aliases to start with, and later wish to switch to having
+// two separate type declarations - for now, I don't want that to be a breaking change).
+//
+// If you do extract a brand from an open construction type, you'd be allowed to assign an already-constructed instance to the brand, but not to the construction-type.
+// If you want to allow both, you would have to use a union.
+// e.g.
+//   let ConstrType = type { x: number } where {
+//     Global myModule.MyType = brand;
+//   }
+//   let a: ConstrType = value { Global .x = 2 };
+//   let b: ConstrType = a; // Illegal - it's already been constructed as `ConstrType` and you can't do that again.
+//   let c: MyType = a; // Legal
+//
+// Open-construction types are supposed to stay somewhat local, so I'm currently restricting them from being exported from the package.
+// Instead, the package should export functions that expect the open-construction type as a parameter. If the package user
+// really needed to handle the type, they could get something like the type by doing `ref Parameters<theFn, 2>` - which
+// would give them a limited version of the type. If you do `Global .myThing = ref Parameters<...> = ...`, you won't
+// be allowed to then access any properties on this `myThing` object (due to the separation of construction and consumption policy).
+// All you pretty much can do is pass the value into the exact function that expected it.
+// (or, I may allow you to make a subtype out of it as well §XQykU).
+//
+// One advantage to keeping the open-construction type local, is that you can then convert it to a class at any point in time.
+// You 1. Rename `MyType` to something else, and perhaps stop exporting it, 2. Create a new class that has the same API that `MyType` had,
+// and 3. in any function that expected the `ConstrType` as a parameter, make them create an instance of the class internally.
+//   
+// (All of this is subject to change)
+//
+// More concrete example on how you extract a brand from an open-construction type:
+Global .myConstructableType = type { method: string, url: string } where {
+  // "brand" here being a special keyword to get the brand for this type.
+  // Don't love this whole `where` clause thing, but I'll use it for now and evolve it.
+  // It lets me completely separate construction from consumption of the type, exporting the two halves separately.
+  // Q: Is there ever a desire to have the construction and consumption be hosted inside the same value, instead of putting them in two separate values?
+  Global myModule.myType2 = brand;
+}
+
+// (§WG6WD)
+// It used to be the case that "identifiable" was required on values that hosted brands. I lifted the restriction,
+// because the below explanation doesn't hold anymore - open-construction (behavior) types
+// now don't have brands associated with them by default,
+// so you can't tell if two variables host the same open-construction type or not. Not unless you extract
+// the type from it. For now, I'm going to make it so "identifiable" is only required if it's a "closed-construction"
+//
+// `of` can only be used when the containing value is marked as being `identifiable`.
+// This is because you could store this value in multiple variables (e.g. Global .Alt = .ExpectationFn).
+// Later, if you make a function that says it accepts a value of type `Alt`, you're also saying it expects a value of type `ExpectationFn`.
+// The two variables reference the same brand, so they can be used interchangeably. This also means the end-user has a way to see
+// if `Alt` and `ExpectationFn` are the same, at least at type-check time. As a result, there's no real reason to hide this information at runtime,
+// which is why the value must be marked as identifiable - to allow runtime reference equality checks. Most of the time, it's not very useful
+// for these values to be identifiable anyways - it's not like you're polymorphically using these values and need to do runtime checks.
+//
+// This technically isn't true when "of" hosts an open-construction type that never had "typeof" used on it - in that scenario,
+// it's not possible to tell a type-alias apart from the real thing. Even still, for now, I'm still going to require hosts to be
+// "identifiable" - it allows someone to later do a "typeof" check and extract the brand from the open-construction type without
+// being a breaking change for anyone who had used "of" on that type. I may change my mind about this later.
+// TODO: Can I think of any reasonable concrete reason to do a runtime check with one of these identifiable branded values? Or is this really just for consistency?
+
+// For simple assignments like this, you don't have to provide a name after `value`,
+// that name will automatically be adopted and provided.
+Global .Expectation = value {
+  // Note that I can reference `Exception` inside this definition,
+  // even though it wasn't defined as `value Exception { ... }`.
+  // This is what the assignment did - let me access that `Exception` variable before the assignment happened.
+  Exception .abc = 123
+}
+
+// You can also define behavior types for "bare values".
+// (This is just a rough idea - I'll pin down the actual syntax later as I work on the type system).
+value {
+  of type {
+    // Perhaps access control modifiers shouldn't be used in these behavior types, nor should
+    // they be used if you're building a value that conforms to a behavior type?
+    // They seem especially silly when the value is being defined inside a function call - the definition
+    // really doesn't care how public these properties are - they're intended for the library to consume.
+    // The library might care how public they are (and maybe should auto-attach access control modifiers?), but I'm not so sure
+    // it would actually care that much.
+    //
+    // For now, I'll say access control modifiers are optional when defining these types, and if omitted,
+    // the implementor must set it to `Global` on their side.
+
+    Global .myProp: number
+    // Specify a property is optional
+    Global .myProp?: number
+    // Specify a custom level of access control it must have, at a minimum
+    SomePackage .myProp: number
+    // And you can assert certain qualities, such as "it must not be an empty list".
+    // Perhaps the above counts as specifying qualities - not sure.
+  }
+}
+
+Local .ToString = type (...) => ...
+Local .xx = value someValue {
+  // By explicitly specifying the ToString type,
+  // I'm forcing the value to not take any more optional parameters.
+  // (ToString would have been defined as `type () => String`)
+  // Note that it's not possible to conform to two behavior types at once - that
+  // could cause issues if they both are updated to accept a new optional parameter of the same name,
+  // but are intended for different purposes - i.e. they happen to be the same doesn't mean they will stay the same.
+  Global toString: ToString = () => {
+    return String.new(...);
+  }
+}
+
+// If you want to give a value a reference identity, just tack on "identifiable".
+// This allows it to be used in runtime referential equality checks.
+// Future: I may revisit this syntax - but it seems like a somewhat straightforward way to do it.
+//   Trying to build identity from primitive pieces gets really complicated.
+identifiable new Class { ... }
+identifiable value { ... }
+
+
+--------------------------------------------------------------------------------
+The type system
+
+Three aspects to consider:
+* nominal types
+* qualities
+* Behavior types (is this any different from qualities?)
+---
+* Support unions? Overloaded functions? (Function overloading is similar to functions that take union parameters from the callers perspective).
+
+Using "class MyClass { ... }" or "value { of type ... }" when defining a value makes it a brand. After that, it can be used as a nominal type. In the type system, just place it after a colon.
+
+(x: MyNumber) => { ... }
+
+At any point in time, you can give a variable definition a type as well, though I'm not sure if it's valuable to do that unless it is a behavioral type, in which case you're promising you won't provide any more behavior than what it defines.
+Future: Perhaps I'll restrict it so you can only use this syntax with behavioral types?
+
+Global .x: MyNumber = MyNumber.new(...)
+
+A rough idea of how behavioral types could be defined is shown in the previous section - I'll keep running with that for now.
+
+Types of types (i.e. the type of things that can go after a colon) - this doesn't take into account qualities at the moment:
+  // An explicit use of a brand.
+  Global .thing: MyThing = MyThing.new();
+
+  // Referentially or structurally equal to 0.
+  Global zero: is 0 = 0;
+
+  // The items below are only needed if I wish to follow the idea that any given
+  // assignment can be given an explicit type of some kind.
+
+  // When doing `x = value { ... }`, the `x` name is available inside the
+  // value definition and refers to the value itself. Perhaps that `x` name
+  // can also be available inside if the type-space after the colon, which is why `typeof thing`
+  // could be valid - `thing` referring to the value defined afterwards.
+  //
+  // Typically `typeof` can only be used inside the value definition - perhaps this type space can count as being
+  // inside the value definition.
+  //
+  // `typeof` extracts a brand from value.
+  // So this is basically saying it's equal to its own brand.
+  Global .thing: typeof thing = value { ... };
+
+  // In this scenario, we're assuming that SomeSubModule was created as a bare value (value { ... } syntax)
+  // which doesn't come with any kind of type information. So the only way to provide an explicit type would
+  // be to say "this is the exact same value as that" - what the "ref" keyword is doing here.
+  // This is different from `is`, because `is` would do structural or referential identity comparisons - this
+  // value doesn't necessarily need to have a runtime-comparable referential identity to use the `ref` keyword.
+  //
+  // Perhaps this is what the language is automatically doing when it infers types - it just infers everything
+  // using `ref`.
+  //
+  // You can also do `ref ReturnType<a.b>.c` to represent "get the return type of b" (or, alternate syntax idea: `a.b(...).c`).
+  // Unlike TypeScript's ReturnType<...>, this doesn't give you the literal type being returned - that type may not have
+  // been exported for you to use and handle - you can't get around access-control by grabbing the type this way.
+  // This is, instead, a more limited "ref" type - all it codifies is that the value was returned by that exact function.
+  // (put another way, if internally two different functions return the same type, you wouldn't be allowed to do `x = ReturnType<fn1> = fn2()`,
+  // because ReturnType<> doesn't know that these two return the same type)
+  // Pro: This would allow the language to use `ref` mechanics behind the scenes for type inference, even when
+  // function calls are involved. This could also permit bare values to be returned from functions as now there would be a way to
+  // reference the bare value's type. We still might not allow two different bare values to be returned from a ternary as that would be pretty useless from
+  // the consumer's side under the way unions are currently designed - there would be no way to tease them apart.
+  //
+  // The reason it's important for `value { ... }` to not provide a type by default (§ycyDL), is you may
+  // be in a situation where you do `Global .value1 = value { ... }; .value2 = value1`. They start as exactly the same
+  // value, but you don't want outside observers to be able to tell that the two are exactly the same, because in the
+  // future, you might wish to change that, making them into completely separate bare values that have some common properties.
+  // This means, they cannot have a referential identity exposing the fact that the two are really the same.
+  Global .alias: ref SomeModule.SomeSubModule = SomeModule.SomeSubModule // Where SomeSubModule doesn't have a publicly-available brand
+
+For the language to automatically track qualities of a value, you have to explicitly define the quality you wish to track. (though, there could be a few built-in qualities the language can track, such as "for this union type, is it not this variant"?) Lets use a definition for a number type to play with this
+
+// A struct is like a class, except its instances are automatically set up to be compared by value.
+// The first thing it compares is that the two values are instances of the same struct.
+// Then it compares every piece of data on the instance, including methods, child data, etc.
+// When using a struct, you can only put data in the instance if 1. that data is, itself, comparable
+// (i.e. an instance of a struct), or 2. its definition is happening inline, making
+// it obvious that it'll always be the same across instances (e.g. `Global .myFn = () => { ... }`).
+// Things like hashing are automatically supported as well, so these can be used in maps.
+//
+// Other possible consequences of marking something a struct (not sure if I will do this or not):
+// - You can't perform any side-effects aside from mutation.
+//   Though even mutating yourself might be forbidden - it means two values that looked equal aren't actually equal - you can modify one of them to see if the two are linked to the same reference or not.
+struct Number {
+  // Normally, this sort of type signature means we have to prove that `previous` is set to the exact same value that was passed in.
+  // Because we're in a struct though, this signature can be satisfied as long as something
+  // equivalent is returned.
+  // Future: Is there a better way to handle generic syntax?
+  Global .suc = <T: Number>(number: T): Number & { export previous: T } => {
+    return Number.new(number)
+  }
+
+  // `&` can be used to tack on qualities - in this case,
+  // we want to say that this isn't just any old number, we specifically want, as part of
+  // the contract, to say that this number will always have `previous` set to an instance of `Null`.
+  Global .zero: Number & { export previous: Null } = Number.new();
+
+  Global .new = <T: Number | Null>(previous: T = null): Number & { export previous: T } => new Class {
+    // Note that the `Global previous` line will get set to null, which is different from omitting it.
+    // Future: What if I wanted to actually, conditionally omit it instead, what syntax would I use? (I could allow any code to run in a value definition, and let you use an if block?). Should I support omitting it?
+    Global .previous = previous;
+  }
+}
+
+struct Parity {
+  Global new = (state_: 0 | 1) => new Class {
+    // This value can be compared due to it being a struct, but no one can access the internal state, because it's private.
+    Local .state = state_;
+  }
+
+  Global even = new(0);
+  Global odd = new(1);
+
+  // TODO: Don't love how interface-like this is.
+  //
+  // The "quality" prefix means the return-type values must be a struct, and the function
+  // must take one argument of the type it's a quality for, and the return-type must be the class being made into a quality
+  // (you must be inside the return type's definition to mark a quality function for it).
+  // "quality" classes can be used in type-space.
+  // (This also means the instances can't be brands - so can't have sub-instances using "of" syntax - a value can only have one purpose in type-space)
+  // Note that this design means you can have quality factories, such as divisibleBy(3) returning another function that takes a number and returns a DivisibleBy instance, thus letting you parameterize the qualities.
+  // This design also means it's impossible to track or pre-define all possible qualities, because there could be infinite (due to parameterization).
+  //
+  // As such, a quality will only get followed if the caller or caller's caller needs that information.
+  // Aside: I believe quality factories, such as divisibleBy(), needs to be provided with a numeric literal, it can't just receive anything
+  // of the number type, or it won't be able to do proper quality tracking. I'd need to provide type syntax to say the exact instance
+  // must be known at type-check-time, it can't be a dynamic value.
+  Global do = quality (n: Number): Parity => {
+    // I'm allowing arbitrary code execution - I believe this will be fine and that we can always translate it to a series of boolean propositions.
+    // If there is an issue, I can instead require something simpler.
+    if (n.previous == null) {
+      return even;
+    }
+    
+    if (n.previous.previous == null) {
+      return odd;
+    }
+
+    return Parity(n.previous.previous);
+  }
+}
+
+// `infer<Parity, ...other qualities>` is used to automatically grab needed qualities from the input to infer the specified output qualities.
+// Future: Don't love that design. Also has issues - what if I want to infer qualities for all possible variants of a parameterized type? Or let the end-user infer a quality?
+Global sum = (a: Number, b: Number): Number & infer<Parity> => {
+  if (b.previous == Number.zero) {
+    return a;
+  }
+
+  return Number.suc(sum(a, b.previous));
+}
+
+// Say we call this with `sum(even, odd)`, i.e. `sum(2 as Number & Number & #isEven, 1 as Number & #isOdd)`
+//   (Don't know if "as" will be real syntax or not, but the point is that's the only type information available).
+// We hit `b.previous == Number.zero`, which is the same as `if (b.previous == null)`.
+//   we'll know the condition won't be true by "odds" definition. Then we'll see `sum(a, b.previous)`. By definition, we know `b.previous` is even, so now we do the same calculation, but with `sum(even, even)` as params. As discovered below, we'll figure out the result is even, which then gets passed into `Number.suc(...)`. Based on its type signature, we know we'll end up with `{ export previous = <#isEven> }` which satisfies the type signature for `#isOdd()` (we can try and verify parity after each numeric transformation).
+//
+// Calculating with sum(even, even):
+// We start at the step `if (b.previous == Number.zero)`. Based on even's definition, this may be the case. If so, we continue on to `return a` - we know `a` is also even, so if this branch is taken, an even number will be returned.
+// Otherwise, we do `sum(a, b.previous)`. Based on definition, and the fact that we know `b` is not null anymore, we know this is the same as doing `sum(even, odd)`.
+// Future: How to handle termination checking for this sort of thing?
+// We know from above that `sum(even, odd)` is odd. We give that to `Number.suc(...)` which gives us the type `{ previous: <#isOdd> }`, which, from definition, is even.
+// Thus `sum(even, odd)` yields an even number.
+
+Future: Can I redefine built-in behavior type syntax as syntax sugars for qualities?

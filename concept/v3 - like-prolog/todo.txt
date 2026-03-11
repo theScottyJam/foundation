@@ -1,0 +1,20 @@
+--- Playing with closures
+
+The following is an example of how closures could be defined
+
+  for all sum2 in
+  there exists one $a in
+  // The caller has to define the sum2 entity, but that's it.
+  // Once defined, this rule will automatically associate certain relationships to it.
+  sum1($a, sum2) and
+  for all $b in
+  for all $c in
+  if sum($a, $b, $c)
+  then sum2($b, $c)
+
+
+
+--- unorganized
+
+Design the proof engine
+  Perhaps something I can decide after the procedural language is designed. I could provide other program data and proof-engine tools as inputs into arbitrary code and let it apply whatever transformations it wants. It would all be procedural.

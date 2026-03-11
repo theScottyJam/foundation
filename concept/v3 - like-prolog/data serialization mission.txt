@@ -1,0 +1,27 @@
+Foundation is: A way to codify arbitrary data that's easy for multiple tools (especially proof engines) to consume different, sometimes overlapping portions of the data.
+
+Some interesting points that are implied by the above mission statement.
+* It's a minimal format. Fewer semantics makes it easier for proof engines to operate on it. So things like numbers aren't built into the format, instead, they're built up from the primitives provided.
+* It's makes it easy to express high-level ideas. Technically binary is a minimal format to codify data, but it's a lot more work to teach a proof engine how to understand the data contained within, or show it what kinds of manipulations are sound.
+* Multiple different tools can operate on the same data for different purposes (generating a compiled artifact, type checking, proving, etc).
+* For the different kinds of tools to do their jobs well, sometimes the data itself needs to leave annotations for those tools, and sometimes the data needs to obey certain rules (to compile a JavaScript program from the data within, the data has to represent a serial set of instructions - rules like that). Those rules could be standard rules that many tools know how to use, or tool-specific rules.
+* There may be silos in the knowledge graph, where one portion can be compiled with one tool, another portion may be intended for another tool, some tools may span multiple silos, and so forth.
+
+There will be tools provided, such as a "foundation language" and "foundation proof engine" - these are separate from just "foundation", and I may give them different names in the future if I don't think they hold to the same standard of quality as "foundation". If I do keep their name, then I may rename "foundation" to something like "foundation knowledge graph".
+
+
+--------- Questions that stem from the mission that I'll eventually want to answer (and move to another file once ready)
+
+The knowledge graph:
+* ?? How does it conform to external interfaces, such as the interface of proof rules?
+* Can one silo read another silo in as data? Can it read itself in as data? - yes and yes, though the code would see it come in as instances, it wouldn't see the raw data.
+* ?? What actually causes silos to be separated
+* ?? Is there any other kind of data it might want to represent in the knowledge graph?
+
+I also need to answer questions about the data format:
+* Inheritance?
+* Should objects have a type link? Only with unions?
+
+
+
+CONCLUSION: I'm not going to work on the data format for now. The primary place this is relevant is 1. when a tool is trying to analyze a silo, and 2. when interfacing with a proof engine and you need to see the way something is coded. In both of these cases, what you really care about is traversing rule structure, which is more specific than "generic data", and you may interact with traversal instances instead of the data directly. All together, I don't think there ever is a need to worry about how the raw data gets codified, which ruins this mission statement - the spirit is still the same - we codify knowledge, but we need to go a step higher-level - we codify it into a set of rules.

@@ -1,0 +1,45 @@
+// Examples of defining subtypes.
+
+Global .UserDetails = class {
+  Global .new = (name: string, dob: Date) => new Class {
+    Global .name = name;
+    Global .dob = dob;
+    Global .age = Diff(currentDate(), age);
+    Global .toString = () => { ... }
+  }
+};
+
+Global .UserSummary = class {
+  global .new = (name: string) => new class subsets UserDetails {
+    Global .name = name;
+  }
+}
+
+Global .ageInfo = value subsets UserDetails, SomethingElse {
+  Global .age = 0;
+  Global .dob = Date.new(0, 0, 1);
+
+  Global OuterModule.AgeInfoBrand = typeof Local;
+}
+
+// You can now pass UserSummary or AgeInfoBrand around, and you can also pass in a UserDetails instance
+// wherever those other brands are expected.
+//
+// Subtypes can be used:
+//   * If you have a function, like fetch(), that takes tons of properties, and you want to hand small chunks of those properties around to helper functions,
+//     subtypes can help with that internal organization. In this scenario, the subtype would stay internal to a package - there's no need to make that public.
+//   * They could be used as a backwards compatibility tool. If you declared that two functions return the exact same brand, then later realized you
+//     needed one of those functions to return a little more information, you could make a separate class, and make one class a subtype of the other.
+//     While this works, it's a band-aid over an earlier mistake. If these return types were capable of evolving separately, they shouldn't have
+//     been made into the same type to begin with. In fact, you could have just returned the value without a brand.
+//     FUTURE: Consider adding an easy way to strip the branding of a value before returning it? So it's easier to do the above option?
+//   * Just because a subtype could be used, doesn't mean it should. For now, I think good advise is to use explicit conversion from one
+//     type to another by calling a function that returns the other type. This allows the other type to not stay a strict subtype as well - in
+//     case it needs to sprout new properties the supertype does not have. Valid exceptions can be found in the other bullet points.
+//     TODO: When should subtypes be used then? I believe error-unions will require their use. If so, I need to figure out what makes them different and update the explanation here.
+//
+// For now you can't subtype open construction types. It doesn't seem overly useful (considering the supertype you would be trying to use is limited
+// in scope to the package it was defined in - there's just not much reason to go out of your way to
+// add extra compatibility benefits to something so small in scope).
+
+// Future: Can you subtype unions?

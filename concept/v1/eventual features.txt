@@ -1,0 +1,56 @@
+A list of features I would eventually like to consider providing in some fashion, even if the current version does not have them.
+* proofs - allow arbitrary logic to be proved, while still preserving some encapsulation of libraries (and perhaps on the stdlib as well?). The encapsulation would limit what can be proved, but there could still be value in letting proofs exist on your own code.
+* Atomic programming: Making sure a program can survive the "plug being pulled". Effects and such can all have the ability to roll back, or to require things to run in a certain order, etc.
+* Saving AST instead of source code. And/or allowing libraries to perform AST transformations on your code when they update (so they can rename their functions, etc) - a "softer" breaking change - your code will continue to work fine after the update, though you can't revert the library version (unless they support that to), and it makes your codebase harder to reason about if the APIs you use keep changing.
+  * A programmer can have their own syntax shorthands they prefer, that the language will automatically translate into and out of for them.
+    - This is somewhat dangerous - if you're used to seeing the code in some crazy macros, everyone else might end up reading it in a really verbose fashion that you didn't bother making cleaner, because you didn't see the mess. It's also less portable - code snippets can't be easily copied around to and from the internet. And someone else not using your macros might edit the code in a way that your macros won't pick up to translate them back into them.
+  * Versioned functions. I can rename doThing to doThingV1(), provide an AST transformer, then provide a new doThing() that's labeled as "v2". When discussing it online, it's best to note that this is the "v2" form of the function. Implement v1 in terms of v2 if possible - this translation implementation could then be tucked away into a corner of the codebase and forgotten - it should always work as long as you don't make breaking changes to the v2 implementation (and if you do, you can dig up that corner of the codebase and fix the translation code).
+* Doc-comment support, maybe with doc site generation capabilities?
+* Ability for custom syntax to register editor support for things like syntax highlighting
+* lifetimes
+* Out of memory error handling
+  * How does WebAssembly handle being out of memory?
+* Good unit test support, including:
+  * Built-in testing library
+  * Perhaps the ability to write tests inside of doc comments
+  * Ability to mark a function as mostly private - still letting tests access it, but no one else.
+  * Code coverage
+  * Automatic regression testing (comparing two commits to see if it can find any examples that would show that something changed between the two).
+  * First-class support for dependency injection
+Better editor integration (things I could do if I made a custom editor, or it might be possible with editor plugins as well):
+  * text-highlighting that can be used for other things besides identifying syntax: https://buttondown.com/hillelwayne/archive/syntax-highlighting-is-a-waste-of-an-information/
+* Saving AST instead of text, such as with https://www.unison-lang.org/
+* array.map().filter() (and similar situations) can be optimized by the compiler. Should I support invisible optimizations like this, or provide some explicit way of doing it, along with some way to guide you to using the explicit optimizations when able? Similar story with tail-call recursion, loop unrolling, and so forth.
+* Dynamic data structures that pick between, e.g. linked lists and arrays, depending on how it gets used?
+* Ways to keep data in sync - such as making an age property always be a calculation based on the date of birth and today's date. You can provide 2 of 3 during construction and it auto-calculates the last?
+* Supporting subsets of the language for specific scenarios, such as:
+  * Compiling it to run in the GPU
+  * Compiling it to SQL
+* Allow a library to provide different degrees of stability to different areas, and somehow encode that in their version number. As a consumer, you could declare that you do not want to depend on any of their more fragile stuff (and the type system would prevent you from doing so). When you do depend on something fragile, perhaps you could also opt into "I only want to depend on X fragile thing, not Y" if the library subdivides it that way. All of this can be encoded in the auto-update algorithm as well.
+  * example: You could specifically handle all error variants from our union that we return, but unless you also provide a catch-all handler, your code might break fairly often - we may introduce new error types.
+  * example: moat-maker has a more stable API and a less stable API - the less stable API being the AST shape of TypeScript nodes.
+* Because the system is transaction-heavy and automatically saves progress, would I be able to utilize that for other features such as:
+  * hot-reloading, where you can make code changes during development and have the automatically patched in with minimal interruption?
+  * Maybe we could even publish patches for the end-user to consume in a hot-reload style, where they can get the code changes without reloading the whole page.
+  * Improved debugging when a fatal error happens, as we'd be able to see what the data looked like in earlier transaction steps.
+* Built-in support for verbose-logging? Logging data between awaits could perhaps be automatically handled (I believe I mentioned that elsewhere), but there's also value in being able to explicitly supply log information, such as when you go into a race-condition-handling branch - you might log this out with a soft warning - it's valid for the path to be taken, but should be rare. (Though maybe the explicit logging of that path isn't really needed - again, if all relevant data is logged out between awaits, you should have enough information to trace it into the race-condition branch if you're debugging a specific request).
+* Ways to opt out of language systems if you don't want that level of safety. E.g. opting out of the transaction system, or out of the quality/taint-tracking system.
+* Should I support multiple natural languages? Could this be the first spanish-supporting language? (Only really practical if I go the route of saving AST instead of text).
+  I would need to support it in: Control structure names, builtin functions, error messages, etc. There could be an argument for allowing error messages to support translations even if the rest of the language doesn't - third-party libraries could intend for their errors to be shown to end-users, and may wish to provide translations for that purpose.
+* Built-in linter / provide pep-8 style linting rules? camelCase vs snake_case?
+  * Snake_case probably is more readable, but people have a tendency to squash the words together (though maybe that's just the Python stdlib that was doing that, perhaps third-party tools were better).
+* Proxies?
+* zero or one based indexing? Or maybe an index can be its own unique type that can help with off-by-one errors, by letting you describe their purpose (lower bound, upper bound inclusive/exclusive, between two elements, etc).
+* Focus the language on more senior developers (it requires a fair amount of knowledge to use a type system this complex), but perhaps also provide an entry-level and/or quick-prototyping alternative that's easier to get into and can use the same libraries?
+* Field definitions - I can specify, for example, a database field "username" with qualities such as "it can't be more than 50 characters, use punctuation, case is preserved but compared insensitively, etc". I can use the same field on the API layer and get automatic validation. And I can use it in UI form inputs and get automatic validation there as well, or at least type safety to make sure I'm explicitly providing all of the validation it requires.
+* Doc comments? Unit tests inside of comments? Deprecation annotations?
+* Any way I can make it so I can have variable names like `2dPoint`?
+* There's something nice about how with functional languages, property access looks the same as calling a function with zero parameters. It means that when defining a new property-like item, there's no decisions about whether it should be a getter function or a straight property - it's the same either way (and with it's lazy evaluation, that property access still acts somewhat like a getter function, but I believe it's memoized, and it can't perform side-effects). Is there something about this I can emulate in my language - or at least some guidelines I could draw out to help know when something should be defined as a no-parameter function vs a property?
+
+Common features I may support later:
+* async/await
+* generators (maybe? They're not all that useful)
+* traits / polymorphism (see _nocommit concept2.txt for why I removed support for them from the core).
+
+How certain am I about each design decision? If uncertain, do I have ways to change the design with minimal breaking changes?
+When it comes to more library-like features (such as an http tool), could I start by providing one that just mimics how other languages do it, then later provide a better version that tries to be cleaned up as much as possible? It means the original tool should be under a special namespace, like httpV0, then the next one under just http, or something like that.

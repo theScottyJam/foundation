@@ -1,0 +1,103 @@
+~~~~~ NOTES FROM STUDY ~~~~~
+These notes haven't been cleaned up very much - I got the rough idea I wanted and moved on.
+
+Further details are explored in "error handling.txt", since error can be handled via the transaction system as well.
+
+
+
+read/write quorums
+idempotence
+During split brain, choose consistency or availability
+no "now"
+Recommendation: low consistency where possible, strong where required
+scenarios: banking, email, publishing,
+  page crashes while transferring money and the user wants to retry - how to ensure a double transfer doesn't happen? 
+    - Solution? A transaction system where you first register that you want to perform the action, then you do it. If the client crashes, upon next load, the server can inform the client if there's a pending transaction or not - assuming we're not in a split-brain and the client doesn't reconnect to the other side of the split.
+
+? How do people typically handle eventually consistency in clients - retries?
+
+
+~~~ Example Protocols ~~~
+
+Reliability sending a message:
+  All messages are tied to a randomly generated UUID the sender generates
+  This could probably be done via UDP for less overhead, as it replicates some of what TCP does.
+
+  sender
+  - send a message (PAYLOAD)
+  - Periodically request ACK for that message (ACK_REQUEST)
+
+  receiver:
+  - If receives message, respond with ACK
+  - If receives ACK_REQUEST without having received PAYLOAD, sends back a "RESTART", asking the sender to start all over (the sender should generate a new UUID when doing so)
+    - If the RESTART fails to send, it's fine, the sender would eventually send another ACK_REQUEST and the receiver would respond with another RESTART.
+  - If receives ACK_REQUEST, responds with ACK
+    - This allows the sending of ACK to fail, as the ACK_REQUEST will keep prompting us to ACK.
+
+  Designed for non-idempotent situations. If the message is idempotent, then the unique id could instead be a hash of the message, that way if the client gives up waiting for an ACK, then tries again later, you don't end up double-sending the message.
+  This ensures a message will eventually get sent (or the client can give up, not knowing if the server received it or not)
+  Relation to two general problem: At no point in time can the receiver ever be certain that the sender knows the message was received. In most situations, this is fine - the receiver usually isn't required to know this, and the sender can keep asking if the message was received as many times as it needs to.
+  Assumption!: The client doesn't crash during this process. (that's why idempotent messages are still preferred, they're resilient to client crashes)
+
+
+Reliably writing data:
+  Scenario: A client is trying to perform a bank transaction, but the website crashes as soon as they hit send. So they refresh the page and try again.
+  All messages being sent will use the reliable algorithm from above to do so.
+  I'm following the "read from 1, write to all" quorum rule - those numbers could probably be adjusted if wanted, but it would require reworking the algorithm.
+
+  sender:
+  - Generates a unique ID for a transaction that will be added to all messages going both ways.
+  - Tells receiver they plan on starting a transaction (TRANSACT_PREP)
+  
+  receiver:
+  - Sends this TRANSACT_PREP message to all replicas
+  - Responds with TRANSACT_PREP_ACK.
+
+  sender:
+  - Asks to perform the transaction, via TRANSACT
+
+  receiver:
+  - Sends TRANSACT to all replicas
+  - Responds with TRANSACT_ACK
+
+  If the page crashed and reloads, and talks to a node that hasn't seen TRANSACT_PREP:
+  - It can be assumed that the transaction didn't start.
+  - The user can assume that the transaction was unsuccessful and start a new one.
+  - Bonus points if the server eventually receives the old TRANSACT_PREP message and notifies through the user's new connection that there was a failed transaction, in real time, letting them retry it.
+  - Eventually, the old TRANSACT_PREP will time out and be canceled.
+    - Basically, a given node can decide to cancel it if it's been too long and start trying to send out a cancellation event. The node that first send out the TRANSACT_PREP event should take the lead in this, but other nodes may do so as well if, for example, the first node went down. It won't fully be canceled until a majority of nodes agree to cancel. If a TRANSACTION request comes along while the cancel requests are happening, then it's a race to see who can get majority first. If a node has seen both a cancellation and a transaction request, then it will "vote" based on the first one it saw. A leader node will need to collect the votes to figure out which one wins, then send out the winner information to everyone (again, if the leader fails part-way through, any other node can take the role of the leader - the leader in this case is simply gathering and spreading information).
+
+  If the page crashed and reloads, and talks to a node that has seen TRANSACT_PREP but not TRANSACT:
+  - We can't tell if the actual transaction started or not.
+  - The page load will take some extra time while the server talks to all of its peers to figure out if the transaction is on-going.
+    - It could send out a request to all peers asking if anyone has seen a TRANSACT request. Or it could do some peers, and if no response, do the rest.
+  - If it's not on-going, the user can assume the transaction was unsuccessful and start a new one, as before. Bonus points if the failed transaction is displayed, letting the user choose to retry.
+  - If it is on-going, display the progress of the transaction to the user.
+
+  If a replica is trying to communicate with all of its peers, but one of them is not responding:
+    - It will begin petitioning to evict the replica(s) from the group. It will send an EVICT_PLEASE_VOTE message to its peers, with a timestamp of when it was last seen online.
+    - If a peer has seen the replica recently, they can send back EVICT_NO_VOTE, otherwise they send EVICT_YES_VOTE. Both will contain a last-seen timestamp.
+    - If the original replica gets any EVICT_NO_VOTEs, generally the attempt should fail and they'll have to retry evicting after a period of time. However, if they see from information collected that the node is only semi-responsive (only talking to some nodes, or only responding sometimes), it can choose to ignore the no votes and precede with evicting until the node is more stable.
+    - It will send out an EVICT message to all peers. Once received, the peer should act like the malfunctioning node is evicted immediately.
+    - It will then send out EVICT_DONE to all peers once it's received confirmation that everyone has evicted. Or, if this leader node fails, someone else who has received EVICT can make sure everyone else has received EVICT, then send out EVICT_DONE. These are idempotent, so they can spam them to each other until everyone is clear on what should happen. This step basically exists to make sure everyone gets the message.
+    - Once evicted, nodes will send out heartbeats to their peer to see if its back online and stable, at which point a similar process will happen, but in reverse, bringing the node back online.
+      - Everyone shouldn't send heartbeats to everyone. Instead, perhaps, each node picks a few of its peers to talk with, with some coordination to make sure there's an even spread of checks going on.
+    
+    A queue of messages will be kept in hold, waiting to be sent to the evicted member when they come back online. Once they're online, they just need to ask for messages since the time they think went offline (the min possible time they went offline + max possible clock drift time), then they de-duplicate the messages.
+
+  If a node is struggling to communicate with a majority, it can declare itself as evicted. Basically it starts only responding to heartbeat messages from peers when it can (to say it's semi-alive, but please consider me evicted). Any client trying to communicate with it will receive a message asking it to retry, but talk to someone else (if that last part is possible).
+
+  Note that application-level code trying to follow this model doesn't need to behave all that differently from before - this can all be done fairly automatically. _However_, none of this protocol handles locking - it only exists to make sure the user has a consistent view if they refresh the page. Locking may require splitting the transaction into two steps - the first is the node asking everyone to lock the resource and the second is causing the change to actually happen - the node can auto-retry as well. Both of these steps can happen without needing to loop back to the client. As before, if locking started then things went silent, any node can take over the communication and see the transaction through completion.
+  
+  All together, this can make writes fairly slow, since you have to talk to every single node in the cluster. Solution:
+    Maybe you only have to talk to every single node in your local region in the transaction_prep step - when re-connecting, you're likely to only see those local nodes. Servers can be taught to only accept traffic from specific ip-address ranges, for example, so you can know with good certainty that you're not going to magically hop to a distant server (unless you're using a VPN between the refresh - which may be a risk we're willing to accept).
+    When the actual transaction starts, that will have to be communicated to everyone. Though we could also make a split between leader and follower nodes (there are multiple sub-groups, each with one leader and many followers). Followers can provide data, but they can't initiate transaction - that has to go through a leader. So resource-locking only needs to happen on the group leader nodes. And the group leaders are in charge of communicating the change to the followers. This means a user could attempt to start a transaction, thinking they are able (because the follower said they could), but the leader rejects it because it has more up-to-date information than the follower. This should be fine, because again, we're also making sure local bubbles have up-to-date information as well.
+
+
+~~~ Unorganized Notes ~~~
+
+My write transaction system only works well if there's few people who can read the data. What's effectively happening is the end-user is locking the resource, preventing reads from happening until they finish. This works ok with banking, but in other scenarios, the user could effectively DDOS the resource, keeping it perpetually locked in a loop.
+
+Solution: let the client choose between a quick vs accurate read of the data. Accurate is what is described in the algorithm. A quick read would ignore any locks and fetch whatever data is available, with the understanding that there may be transactions in progress that aren't being shown. The API can choose to only allow quick reads if accurate reads aren't important, in which case the client locking the resource step isn't important anymore.
+
+An "accurate" response only matters if you're the one who has power to update the data. Even then, it only matters if the previous data would influence your decision about mutating it, and if mistakes are really bad. E.g. Google docs editing would probably favor speed over accuracy for each edit.

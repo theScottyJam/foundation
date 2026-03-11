@@ -1,0 +1,502 @@
+// Note the lack of guard rails for those using the numbers.
+// It's expected that if you need more numbers defined, you'll just add more suc() calls,
+// and it's expected that you won't use suc() to define anything else, but nothing's stopping
+// anyone from breaking these rules - there's no protection.
+//
+// Alternatively, I could allow anyone to define their own number atoms with suc(). It'll cause things
+// like add(2, 3, N) to have multiple solutions depending on how many placed defined the number `5`.
+// But in the end, when you output that `5` to the screen, the output logic can ensure that any definition of `5`
+// behaves the same. The only unfortunate consequence is that debugging can be harder when there's multiple definitions of numbers.
+// That being said, the type system could enforce that all "ones" are exactly equivalent, and debugging tools could use that.
+// Other downside: you might create additional relationships to your flavor of numbers. If another module spits out a number
+// that's not in your flavor, that could cause issues. Solution: You define relationship to all "ones", not just your specific "one".
+// It could also be possible to write conversion logic.
+Prolog example:
+  // Built-in: true, false, `,` (and), `\+` (not).
+
+  // Numbers
+
+  let suc(N, M), zero, one, two, ...
+  suc(zero, one)
+  suc(one, two)
+  ...
+
+  let isNumber(N)
+  isNumber(zero)
+  isNumber(N) :- suc(M, N), isNumber(M)
+
+  let equal(N, M)
+  equal(zero, zero)
+  equal(A, B) :- suc(C, A), suc(D, B), equal(C, D)
+
+  let add(N, M, O)
+  add(A, zero, C) :- equal(A, C)
+  add(A, B, C) :- suc(B_, B), suc(A, A_), add(A_, B_, C)
+
+  // Aside:
+  // You can dynamically look up numbers like this, then later
+  // use `isTwo(Two), Two` the same way you would use the atom `two`.
+  let isTwo(N)
+  isTwo(N) :- suc(zero, One), suc(One, N)
+
+  // Albums
+  // An example where it's expected that others will define relationships,
+  // this this module defines some behavior that can be used on those relationships.
+
+  let authorOf(Album, Author)
+  let nameOf(Author, Name)
+  
+  let authorNameOf(Album, Name)
+  authorNameOf(Album, Name) :- authorOf(Album, Author), nameOf(Author, Name)
+/*
+
+If a prolog module were distributed, what restrictions might one wish to enforce?
+* Private vs public
+* Don't add to relationships.
+  * (Should you be allowed to add to some relationships? What if you want to construct a new "author" type for an album library?)
+    * Should I allow "closures" to be created to hold internal private state? Similar to v2?
+*/
+
+////// NOTE: SO far I've only explored how to write rules. I still need to cover proving equivalence of systems and such.
+
+
+
+let add(N, M, O)
+add(A, zero, C) :- equal(A, C)
+add(A, B, C) :- suc(B_, B), suc(A, A_), add(A_, B_, C)
+rule add(A, B, C) :- isNumber(A), isNumber(B), isNumber(C)
+
+// When calling add(), you might want to, also, explicitly state that you're expecting to get one answer out for the two inputs provided. You would then have to prove that the inputs are compatible such that an answer can come out (as opposed to, say, doing add(12, X, 10), which is legal but has no answer).
+// This isn't always the case. Sometimes it's valid to expect no answers, or more than one answer.
+
+//////////// What is the difference between no answer and an invalid question? I could instead put the `isNumber()` checks with every statement, or leave it out entirely since it's implied by the statement contents.
+// -> Perhaps the type system can flag when something will never be true? If you supply an invalid input, it will never be true, and would make dead code.
+// -> Saying that all inputs should be numbers can be nice for documentation purposes, and to make sure things are written correctly.
+//    - It also becomes important if functions like equal() are designed to support many different input types, in which case the add() definition could accidentally say that add(chicken, zero, chicken) is true, but add(zero, chicken, chicken) is not.
+// Conclusion: We don't need any special mechanics to provide type restrictions to functions, but the special mechanics could be nice-to-have bonuses.
+
+//////// Other use-cases to explore:
+// * big-O tracking
+// * sensitive data tracking
+
+
+
+// New information is added by simply adding new rules
+
+isEvent(event5)
+eventTime(event5, 'datetime 1/2/3333 3:00 PM UTC')
+
+isUserCreationRequestEvent(event5)
+userPerformingRequest(event5, userScotty)
+userCreationEvent_username(event5, cookie)
+userCreationEvent_password(event5, 'monster2345')
+
+---
+
+// writeUserToDb(event5, cookie) represents what should eventually get calculated based on the above rules - in reality, there should be variables used here, not atoms.
+writeUserToDb(event5, cookie) -> creates a userWrittenToDbEvent that has triggeringEvent(event6, event5) to let you backtrack, and information about if the write worked or not.
+setUserCreationResponse(event5, ...) -> lets you send a response.
+
+Systems to add: (and what portions of these should belong in "proof" land vs "rule" land?)
+  1. What is the structure of rules that can be added automatically?
+  2. Type checking will ensure that for every request that comes in, exactly one response goes out. How should this get specified?
+  3. How to make sure information doesn't get leaked? e.g. the password shouldn't get sent to the database.
+
+For problem 1:
+  Perhaps new atoms can't be generated on-demand. Only appending to existing relationships. e.g. instead of `isEvent(event5)` we would do:
+    !!!!!!! Is there a way to make it so an event isn't a number? (Perhaps by making a seperate int scale?)
+    EventId(Event, Id) :- isEqual(Id, five)
+    isEvent(EventId) :- isEqual(EventId, five)
+  !!!!!!!This doesn't really answer the question
+
+For problem 3:
+  // We can place a facade over standard lib functions and require everyone to use the facade. The facade can prevent any sensitive data from leaking through (it will simply fail to perform the operation if data is marked as sensitive).
+  isSensitive(X) :- isEvent(E), userCreationEvent_password(E, X)
+  writeDbField(Event, Key, Value) :- stdLib.writeDbField(Event, Key, Value), not isSensitive(Value)
+  --
+  isMarkedWithSensitivity(X) :- isSensitive(X)
+  isMarkedWithSensitivity(X) :- isNotSensitive(X)
+  isInvalid(X) :- not isSensitive(X), not isNotSensitive(X)
+
+
+--------------------------------------------------------------------------------
+
+Built-in and third-party software specification (such as opening files, SSO, etc):
+  They should provide both a specification and an implementation. You can borrow the terminology from their specification. If you ever need to switch libraries, you'd also have to switch specification. If you want to do it in a provable fashion, you'd need to map one specification to the other and show why it's the same. Multiple libraries can also share the same specification.
+
+Things to consider:
+  * How to transform from your custom specification to a shared language specification that can compile?
+    * What if you need to produce multiple compiled artifacts, or one artifact ran in multiple locations?
+    * Can I make it so no side-effects happen unless they're part of the original specification? What if the original specification doesn't specify all side-effects? Maybe the higher-level rules can help here?
+  * Relationships are added over time:
+    * Can I make rules about how relationships get added? Maybe once I've got a type system figured out, I could extend it to define this sort of thing?
+    * Do I need a way to make rules for relationships that haven't been added yet? Don't think so, but maybe?
+  * "Prolog operates under the closed-world assumption, which treats anything it cannot prove to be true as false (negation by failure)." -- is this good? An "open-world" assumption might work better.
+  * Can a type system be defined using the "meta rules" system? I might need to give more power to allow inference and such.
+
+  - Answered
+  * You can't make logical contradictions in prolog - is that a limitation?
+    > You can always make an `invalid(true) :- ...` rule and set it to arbitrary stuff. If it ever becomes true, then something is wrong with the state. You can make contradictions this way.
+  * For every request that comes in, exactly one response goes out. How should this get specified?
+    > You could define `invalid(true)` rules to enforce this. For example, this ensures that for every unique event that triggers an
+      input(), exactly one output() is also triggered.
+
+      invalid(true) :- input(E, _), \+ output(E, _)
+      invalid(true) :- input(E, _), output(E, A), output(E, B), \+ $is(A, B)
+
+  * Could access-control be done via rules as well - I make the source code itself available for inspection, and rules could be made against it?
+    * Can I build a facade over the standard library using this system?
+    > You can prevent others from extending your rules as follows:
+      ancestor(X, Y) :- parent(X, Y)
+      ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y)
+      invalid(true) :- ancestor(X, Y), \+ (
+        parent(X, Y);
+        parent(X, Z), ancestor(Z, Y)
+      )
+      Perhaps I can do `readonly` before the definitions as syntax sugar for generating an invalid rule.
+      Also, perhaps `add(X, zero, Y) :- ...` could really be syntax shorthand `add(X, Z, Y) :- $is(y, zero), ...`. It might not be strictly
+        necessary (not sure), but it would help make it easier to follow the above pattern.
+        !! $is() could give more power than what I want. For example, it's now possible to say "I want every entity that's a fruit, and `$is` not an apple". I don't think it was possible to codify that kind of logic before (without inventing a new isApple() relationship or something). Should it be possible? What are the ramifications? I should look into figuring out if the above pattern can be done without the use of `$is()`.
+      This solution makes sure anyone grabbing your code and trying to use it doesn't extend any existing rules. It doesn't help with internal code organization
+        as much without something higher-level to help out (because it's too easy to mess up if done by hand) - in this case, the `readonly` syntax surger.
+    > And further down I describe "meta rules" that allows rules to be made about rules.
+
+Prolog notes:
+  `true` is "a solution with no bound variables"
+  `false` is "the empty solution set"
+  "meta predicate" - like and/or/not
+  "higher order predicate" - unrelated, but it can take expressions as arguments.
+
+
+### Meta rules
+
+Predicates are first-class. They can be treated as atoms and associated with each other. e.g. you might define and use a scope like this:
+This scoping system really only works if your predicates are readonly
+(are pairs with `invalid(true) :- ...` predicates that makes sure no one else is appending to them).
+Special predicates used: $is(), $isPredicate(), $predicateContains().
+
+isScope(isNumberScope)
+readonly inNumberScope(X) :- $is(X, add); $is(X, equal); $is(X, suc)
+
+isPublic(add)
+readonly add :- ...
+
+isPublic(equal)
+readonly equal :- ...
+
+isPrivate(suc)
+readonly suc :- ...
+
+// These are defined for the whole program
+
+invalid(true) :- isPublic(X), \+ $isPredicate(X)
+invalid(true) :- isPrivate(X), \+ $isPredicate(X)
+
+// States that all predicates must be explicitly public or private.
+// (Alternatively, you could default to private if it's not explicitly marked as public).
+invalid(true) :- $isPredicate(X), \+ isPublic(X), \+ isPrivate(X)
+
+// Ensures all predicates are part of a scope
+// Note: I'm polymorphically calling these scope predicates.
+//     If I ever make parameters take unique ids, I'll have to figure out how to handle this kind of scenario.
+//     - This could be avoided if, instead of doing `myScope(myPredicate)` to associate a predicate with a scope,
+//       I did `inScope(myScope, myPredicate)`.
+invalid(true) :- $isPredicate(X), \+ (isScope(S), S(X))
+
+// Something in the private scope cannot be accessed, unless by something else that's also in the same scope.
+// $predicateContains() takes a predicate on the LHS and will tell you each predicate that's part of its body on the RHS.
+readonly invalidViaInspection(true) :- (
+  ($isPrivate(X), $isPredicate(Y), isScope(S), S(X), \+ S(Y), $predicateContains(Y, X));
+  // Makes it so the only place $predicateContains() can be used is with this invalidViaInspection() rule. Other places can't be arbitrarily using it,
+  // it makes it difficult to make private, internal APIs if this gets used willy-nilly.
+  (isPredicate(X), \+ $is(X, invalidViaInspection), $predicateContains(X, $predicateContains))
+)
+invalid(true) :- invalidViaInspection(true)
+
+In regards to access-control of built-in predicates, i.e. predicates that perform file-I/O and such, I could make it so each of these predicates are marked with $isBuiltin(), then you can make rules that only permit use of specific built-ins - the ones you've vetted and attached additional rules to.
+  That said, file-I/O probably won't be built-in. You can define your own rules that represent file-I/O, and compiler-targets can also define them, then you have to translate yours into its.
+
+
+### Proof writing
+
+To explore:
+* How to mutate one rule to another to show equivalence
+* How to let the type system automatically track "qualities" through an expression, for simpler proofs
+* How to build higher-level proof tools from the primitives?
+
+
+Show that these are equivalent
+
+  addStart(A, B, C) :- (
+    $is(B, zero), equal(A, C) ;
+    suc(B_, B), suc(A, A_), add(A_, B_, C)
+  )
+
+  addEnd(A, B, C) :- (
+    $is(A, zero), $is(B, zero), $is(C, zero) ;
+    $is(A, zero), suc(B_, B), suc(C, C_), add(zero, B_, C_) ;
+    suc(A_, A), suc(C_, C), add(A_, B, C_)
+  )
+
+  I could come up with an $inspect(...) tool that lets you see the content of a given predicate.
+  You can then traverse the predicate and use approved transformation, making intermediate steps, such as "add1", "add2", and so forth.
+  Finally, you can use $equivalent() to show that two predicates are equal (your last step, and the desired result).
+  You can set `invalid(true)` if the two aren't equivalent.
+  You can make rules that show that everything from a specification scope has an equivalent version in an implementation scope.
+
+  At type-check time, all `invalid(true)` rules from the type-check scope must be executed and shown to work. The type-check scope holds the transformation information that brings you from specification to implementation. The type-check scope has its own execution engine - the one that validates your desired properties. In general, you can have different engines run over the program, usually over a given scope, and compile it, check it, analyze it, etc.
+  Perhaps there can be a standard "tool-configuration" scope(s) where tools can look for configuration on how they should be ran. It may contain things like what version of the tool should be ran and such.
+
+
+
+
+------------------------------------------------------------------------------------------------------------------------
+
+Redesign, trying to mix in the v2 syntax instead of prolog syntax.
+
+Can I implement these features?
+  * Optional parameters
+  * side effects
+  * Data coming in over time
+  * Can I define the set of integers
+  * Open vs closed world?
+  * Can I define other boolean operators?
+  * Higher-order functions
+  * Scopes
+  * Can I define asynchronous execution order _and_ allow for multiple programs to be defined in the same specification?
+
+?
+  * Am I trying to attach rules to existing programs that must be proven?
+  * Or am I trying to make the specification separate from the program?
+  As a system specification, I might wish to represent ideas such as "what users exist on the system with these properties", but in the implementation,
+  the users could be spread across multiple types of databases and such, and gathering those properties could be a complex set of queries.
+  Things like "we save in a SQL database" shouldn't be part of the system's specification, that's an implementation detail.
+  Specifications have "points of views". The most important is "How does this system behave from the end-user's point of view".
+    * The "API" could be another point of view, if it's made public.
+    * There can be different granularity of detail in the end-user's point of view. E.g. you might specify that there's a create-new-user
+      form without specifying how exactly that form looks or feels. But another specification could dive into more detail, making sure
+      UIs are consistent and such (maybe even going as far as ensuring design tokens are consistently used).
+    * "auditing" could be another point of view.
+    * "db administration" could be a point of view, albeit, lower level.
+    * "performance characteristics" could be part of the end-user's POV. Or System admin's.
+    * "Mission" point of view, which shows how different parts of the system ties into high-level, abstract goals
+    * A "entity-domain" point-of-view, where entities and their respective fields are described in detail, but it's not shown how they get used or implemented.
+      This is where you might have a "user" entity that's actually spread across multiple tables.
+      High-level requirements may be specified at this level.
+    Overall, the specification can describe every last detail of the system. But, you can choose to only focus on an individual POV, make changes there first, then figure out how to update the rest to stay in sync. Such a system would be capable of supporting multiple views of what's going on, and multiple ways to edit it.
+
+In some views, it may make the most sense to only view things at the high-level. In other views, it may make more sense to let the high-level be annotations of the low-level.
+
+Code doesn't necessarily need to be the only output artifact. Server config could be another (e.g. for kubernetes). Perhaps a task-list of what still needs to be done to connect lower-level to higher-level changes. Rules an image author must follow when generating new images. Auto-generated forms for internal use. Math could be built on this system if wanted.
+  Programming skill will still be somewhat central. In the end, we're writing arbitrary rules, and we need a way to prove those rules.
+    Though for some use-cases, they might just be inserting arbitrary data and relying on rules someone else wrote. And the data-insertion could even happen through another program. e.g. they use it to model business rules using a business-rule-modeling program, which outputs the data in this knowledge graph. Then again, what's the point of the knowledge graph unless you have multiple things sharing the same knowledge graph, but to do that, you need to be able to tie those things together.
+
+The knowledge graph:
+* Has sub-graphs related to different points-of-views and optimized for different tooling
+  * Ideally, each higher-level graph has its dependencies inverted, requiring lower-level graphs to plug into it. This allows changes to be freely made to the high-level graph, then passing it off to someone else (maybe future you) to work out the lower-level details, instead of being chained to the current low-level details. Even third-party libraries would need a thin facade placed over them to integrate them in. (The hard part is when you don't know a lot about how the third-party library works, such as needing to implement SSO. For something like that, it may still be wise to invert dependencies so you can swap dependencies easier, but your inversion may just be a copy of the library's API with irrelevant details removed).
+* Provides ways to specify high-level rules and prove them in the lower level graphs.
+
+Example graph structure:
+  # high-level goals. Produces no output artifact
+  high-level audit-logging rules (comes with various entities)
+  high-level security rules (comes with various entities)
+  Mission (vague goals and ideas, at the edge has features that are required to support the feature)
+
+  ->
+
+  # Produces no output artifact
+  specification for features. Includes specification on how audit-logging, security rules, and mission will be followed, though those can be hidden with different views.
+    Dependencies of audit-logging/security/mission will be inverted, so this must provide the implementation.
+
+  ->
+
+  # Implementation for high-level goals. May produce various artifacts, including executables, configuration, etc
+  Implementation w/ proof of conformance.
+
+  ->
+
+  dependency facade - implementation has its dependencies inverted, so dependencies need a slim facade to conform.
+
+---- "layers" notes
+
+Facts (data) - could use old data graph idea - it has a core feature of treating properties (such as "username") as independent data types that you could associate extra information to it. I'm not sure if that's important or not, but it seems useful to start with that idea being available.
+- the inheritance idea might be somewhat broke. Linking a user to a creator would involve user linked to a creator node which is linked to 1. A creator type, and 2. A user entity. Basically this is a round about way of replicating normal properties. Maybe I already ran into this issue before and have notes on it. Either way, I'll keep running with it, because the further steps involving writing higher level rules probably benefit from a really simple way to represent data. But I may make rules involving what kinds of directed graphs you are allowed to build, or maybe switch direction in the future.
+- thinking further, this solution probably doesn't work (still want to find old notes though). 1. It goes in stark contrast against the decision to avoid polymorphism. 2. I don't believe it accomplishes the intended purpose - the original idea is that I'd be passing around things like a URL object instead of a normal string. But a request object could follow that property pattern described earlier, where you travel to a "requestUrl" node then to the actual string. "RequestUrl" could be extended with other properties, but it has a very specific and non portable type - i.e. it's name implies it's only used as part of requests, so it's weird to turn that into a general purpose url manipulation object.
+- due to the previous issue, I still have to worry about backwards compatibility if you want to later change "request URL" to give a URL object instead of a string. (There's ways to do it, such as AST transformations, introducing a response type parameter to request URL instead of string, making a separate function, etc)
+- ? What would be an alternative option?
+- all entities have a type arrow (can they have multiple? For now, no, due to the polymorphism constraint, but perhaps that constraint doesn't need to apply to data)
+- all arrows have a type as well. (Can arrows have other relationships as well?) That being said, the type is redundant in some cases - a user related to groups doesn't need an explicit type on the arrow to explain what that relationship means. This is similar to how function parameters don't always need an explicit name. For now, I will still require it to keep things simple, but I may drop the requirement. It's valid to have multiple relationships between two entities if those relationships have different arrow types.
+
+Rules
+1. "Constraint" rules that ensure data coming in is valid. Could be database data, kubernetes configuration, etc.
+2. Translation rules that explain how to convert the entities into higher level APIs (accept loose data, provide strict APIs)
+3. High level rules, such as security rules
+
+Rules can be defined similar to prolog - specify a relationship that could be created (potentially including new nodes), and specify a condition that must be true for that relationship to exist.
+- an "invalid" relationship can be created if something is done wrong.
+- can arbitrary integers be created, or do I still have that definition issue?
+
+Proofs and implementation
+
+---
+
+Example of defining facts:
+  // Declare entities with their types
+  // (Or, it's possible we could let the types be inferred based on which arrows types are used - for now we won't allow that).
+  let bob: Person
+  let joe: Person
+  let jill: Person
+
+  // Declare relationships between entities
+  // (Read as `bob's parent is joe`).
+  bob -parent> joe
+  joe -parent> jill
+
+Example of defining relationships based on rules:
+  // Putting a rule on each line is another way of doing AND.
+  bill -parent> alex AND alex -parent> bill
+  // This relationship is not allowed to exist
+  NOT sarah -parent> sam
+  // Defining "or" - the items in angled brackets are the precedence
+  def (`x` <5>OR<4.9> `y`) :- not ((not x) and (not y))
+  // Both of these relationships are put in a sort of limbo state.
+  // If you can prove that one of these is false, that will cause the other to be proved true.
+  // You can either use the earlier rule, `NOT sarah -parent> sam`, or you could show that
+  // no other rule exists that states that the relationship is true, so it must be false.
+  // (The absence of a relationship is false)
+  sarah -parent> sam OR sam -parent> sarah
+  // §qcm4F
+  // Conditional, or "implies". If X is true, then Y must be true. If X is false, ignore Y.
+  //   Conversely, if I find out that Y is false, then I can deduce that X must be false as well.
+  def (IF `x` THEN<10> `y`) precedence 10 right-associative :- (NOT X) OR Y
+
+  // `ALL ... IN ...` is first-order logic's "FOR ALL", and is built-in
+  ALL (x: Person) IN ALL (y: Person) IN ALL (z: Person) IN (
+    IF x -parent> y AND y -parent> z
+    THEN x -grandparent> z
+  )
+
+  // The `ANY `let x` IN<15> `y with x`` definition states that `x` is a variable definition, and its value will be made available to `y`.
+  // This is the definition for "there exists" from first-order logic.
+  // Note on how this works:
+  //   EXISTS (P: Person) IN person1 -parent> P
+  // is stating that some person is the parent of P. Who? Dunno. This is another way to put things into a limbo state until more
+  // information can be found to resolve this further.
+  def (EXISTS `let x` IN<15> `y with x`) :- NOT (ALL x IN NOT y)
+
+  // Alternative formulation that may be easier to use
+  def (EXISTS `let x` WHERE `y with x` IN<15> `z with x`) :- EXISTS x IN y AND z
+
+Natural numbers:
+  // `Type` is a pre-defined entity that all types should relate to.
+  let Number: Type
+
+  let zero: Number
+
+  // This dynamically defines all natural numbers.
+  ALL (n: Number) IN (
+    // Anytime `let ...` is used, a new entity is defined.
+    let n2: Number AND
+    n2 -pred> n
+  )
+
+  // In this hypothetical, `let` will only execute, with certainty, once.
+  // Every other times isZero(n) will be false, and so the right-hand side of THEN
+  // would be put in that LIMBO state where there may or may not be more zeroMarkers defined and associated with `zero`.
+  // One of the ways of collapsing a limbo state is to show that nothing else will ever resolve it and set it to true, so it must be false.
+  // Because `let` is used, nothing else is capable of also defining that same unique element, which should auto-collapse the limbo state.
+  ALL (n: Number) IN (
+    IF isZero(n) THEN (
+      let zeroMarker: Marker AND
+      zero -isZero> zeroMarker
+    )
+  )
+
+Example of defining functions:
+  // examples of functions that takes value(s) and returns a boolean
+  def isZero(n: Number) :- ALL (m: Number) IN (
+    NOT n -pred> m
+  )
+
+  def isEqual(n: Number, m: Number) :- (
+    (
+      isZero(n) AND isZero(m)
+    ) OR (
+      EXISTS (n_: Number) IN (
+        n -pred> n_ AND
+        EXISTS (m_: Number) IN (
+          m -pred> m_ AND
+          isEqual(n_, m_)
+        )
+      )
+    )
+  )
+  // Or with the simpler `EXISTS` rule
+  def isEqual(n: Number, m: Number) :- (
+    (
+      isZero(n) AND isZero(m)
+    ) OR (
+      EXISTS (n_: Number) WHERE n -pred> n_ IN
+      EXISTS (m_: Number) WHERE m -pred> m_ IN
+      isEqual(n_, m_)
+    )
+  )
+
+  def sum(n: Number, m: Number, total: Number) :- (
+    (
+      IF isZero(n) AND isZero(m) THEN isEqual(zero, total)
+    ) XOR (
+      IF isZero(n) THEN isEqual(m, total)
+    ) XOR (
+      EXISTS (n_: Number) WHERE pred(n, n_) IN
+      EXISTS (total_: Number) WHERE pred(total, total_) IN
+      sum(n_, m, total)
+    )
+  )
+
+CHANGE:
+  Instead of defining facts with `joe -parent> bob`, we'll do `parent(child=joe, parent=bob)`. This allows for 3+ arg relationships. I'll let
+    the arrow syntax just be an alternative syntax for the same thing that I want to move away from. And I may allow myself to ignore the
+    keys in the keyword arguments sometimes, for brevity.
+
+Example of defining general rules that must be enforced:
+  // Proves all numbers must have exactly one pred value (or be the number zero)
+  ALL (n: Number) IN (
+    isZero(n) OR
+    EXISTS (m: Number) WHERE pred(n, m) IN
+    NOT EXISTS (o: Number) IN pred(n, o) AND NOT equal(m, o)
+  )
+  // e.g. show how to define a rule that states that a number has exactly one (or zero) previous values.
+
+// How to build a proof engine out of this?
+
+---
+
+How to build a procedural language out of this? Can I define:
+* Ability to return values from function calls
+* Variable declarations
+* Function definitions
+* Function call
+* Higher order functions
+* Local variables
+* Mutable variables
+* declaration scopes
+* control structures, such as while loops
+
+Allow syntax-defining syntax to be able to see the AST of each node, look up bound variables, dynamically bind variables, and execute it?
+Should functions be allowed to return values aside from booleans?
+// ??? Not sure how to get return values to click together unless I
+// 1. Make it so things besides booleans can be returned
+// 2. Give full control of syntax to a syntax engine or something, but at that point I'm basically inventing a full language
+// 3. Provide special capabilities for this need
+// 4. Something else?
+syntax (`fn`(`...args`)) :- exists (let z: unknown) in fn(...args, output=z)
+
+
+What's described above is the lowest-level API surface area that can be shared between modules. Metadata can be optionally layered on top of it (such as "this is a primary return value"), then a "syntax engine" can be placed on top of that which lets you use easier-to-use syntax. The syntax engine may also provide support for macros that can also be imported and shared. These macros would be defined simply as data, but conforms to the syntax engine's plugin APIs.
+
+
+How to define metadata?
+  def sum(n: Number, m: Number, total: Number) :- ...
+
+  The function itself would be represented as data. And it's easy enough to tack on metadata to the data as needed. With the text representation, we would probably add syntax for it, such as `def sum(n: Number, m: Number, total: Number) where isPrimaryReturn(%param:total) :- ...`

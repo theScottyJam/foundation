@@ -1,0 +1,22 @@
+{
+  "extends": ["standard-with-typescript"],
+  "parserOptions": {
+    "project": ["./tsconfig.eslint.json"]
+  },
+  "parser": "@typescript-eslint/parser",
+  "plugins": ["@typescript-eslint"],
+  "rules": {
+    "@typescript-eslint/semi": [2, "always"],
+    "@typescript-eslint/space-before-function-paren": [2, { "anonymous": "never", "named": "never", "asyncArrow": "always" }],
+    "@typescript-eslint/comma-dangle": [2, "always-multiline"],
+    "@typescript-eslint/no-unused-vars": [0],
+    "@typescript-eslint/array-type": [0],
+    "prefer-rest-params": [0],
+    "import/extensions": ["error", "always"],
+    "no-template-curly-in-string": [0],
+
+    // Relaxing some rules for now, could make them more strict in the future
+    "@typescript-eslint/no-non-null-assertion": [0],
+    "@typescript-eslint/explicit-function-return-type": [0]
+  }
+}

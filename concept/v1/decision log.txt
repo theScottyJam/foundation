@@ -1,0 +1,127 @@
+========== decision log ==========
+
+Polymorphic unions:
+Say you have a union of two values, both of which have a "message" property. I don't plan on allowing you to do `myUnion.message` by default. Reason:
+* Do the message properties actually represent the same concept, or are they two different things that happen to be named the same? Unless explicitly told otherwise, it's safer to assume the latter.
+* It may cause issue if a library provides an AST transformer and changes their "message" property somehow. Though I guess it could always change `myUnion.message` to `myUnion instanceof MyType ? myUnion.myNewMessageName : myUnion.message`.
+* Future: I don't seem to have any real strong reasons. Perhaps I should reconsider. Certainly with open unions this sort of thing shouldn't be allowed, but with closed unions, perhaps.
+  - That being said, if open unions are in play, I do need some way of saying "yes, more union variants could be added, but I guarantee that they'll all have X field of Y type". See §DCWN6.
+
+The reason some values shouldn't have a referential identity or a type: §ycyDL
+
+Why unions must be a native language features:
+* It's impossible to build things up without some kind of union. I can't create a list type without doing `NextNode | Nil`. I can't make a maybe monad without `Just<T> | Nothing`. (Though it would be possible to provide some other kind of bare-bones primitive to handle this)
+* It's nice to be able to define functions that can take parameters of different types. (A union would be required for this, but it doesn't need to be very powerful)
+* It's handy to be able to access properties on the union, e.g. if I have `(Error1 | Error2 | ...) &: Error`, I would be allowed to access "message" properties and such. I could also convert `Error2` into an interface instead of a class, and subdivide that into its own union without it being a breaking change.
+
+
+
+
+
+
+========== theory ==========
+
+# Terminology and principles
+
+* Types have two sides - they can be constructed and they can be consumed (used).
+* "consumption-safe change" - A change in a type that won't break someone consuming it.
+  Add optional/required property, make optional property required
+  add optional/required function parameter, make optional parameter required // Using a parameter-list type (being called)
+  add variant to open union
+* "construction-safe change" - A change in a type that won't break someone constructing it. (especially important if the type maintainer is different from the constructor)
+  Add optional property, make required property optional
+  add optional function parameter, make required parameter optional // Constructing a parameter-list type (calling the function)
+  add variant to union
+
+What effects the construction-safe and consumption-safe changes:
+  Due to the "no new dead code" policy described below, anything involving removal of data (properties and parameters) isn't included as a safe change, since that would cause issues if that same data was later re-added, but in a different way. This is a trade-off, the other option would be to allow removal but you can't safely add anything anymore - this however makes the type system less safe, so I'm opting not to do that.
+  Removal of union variants also goes against the "no new dead code" policy, but it create the same dilemma where allowing removal would prevent adding. It still requires a weakened type system to support arbitrary removals of union variants (and still results in dead-code in branches that used to handle the variant).
+  Removal from an open union isn't considered construction-safe, mostly because I'd prefer it if the open union still explicitly called out every possible thing that could be put into it. The "openness" leaves room for the type to expand to receive new variants without breaking consumers, it does not give license to actually put things into it that isn't explicitly specified in the type.
+
+
+# Policies
+
+
+## The "exact construction" policy.
+
+When constructing a type, you are not allowed to provide more information than asked for. If you do, you prevent certain kinds of changes to the type (it can't start expecting an optional new property, because you might already be providing it by accident).
+Example violations:
+* `create2dPoint(value { x: 1, y: 2, z: 3 })` assuming `z` is not actually an expected property.
+* `array.map((x, i=-1) => ...)`, where `array.map()` doesn't currently supply an `i` parameter.
+
+This policy only related to providing a literal to an open-construction type. If you have an already branded value, then the sister policy "no type changing" covers that discussion.
+
+
+## The "no type changing" policy.
+
+A type can only be assigned to a value at value-construction time. You're not allowed to later, ad-hoc say that type1 can be assigned to type2. Say, for example, you have `createGroup(myUser)` (and say it expects something of type `Group`). Due to the "exact construction" policy, `myUser` would not be allowed to contain any properties that `Group` does not specify. The issues are:
+* `createGroup(myUser)` is probably an accident. This isn't a particularly strong reason - especially since we could technically add some kind of syntax to say this change was intentional (such as `createGroup(myUser as Group)`), but it is worth mentioning.
+* `myUser` is now not able to safely to add new optional or required properties to its type, as this could break your `createGroup(myUser)` code (it would cause "exact construction" to get violated).
+
+A similar violation is that of `array.map(someLib.someMethod)` - you can't just type-change `someMethod` like this for the same reasons.
+
+This policy applies, even if the original type hasn't been branded. e.g. `Global .myThing = value { ... }; createGroup(myThing)` counts as a "type change" even though "myThing" doesn't have a publicly available type to begin with. It's better to think of it has "myThing" does have a type/branding - we just never extracted it.
+
+This issue isn't so bad if you're the owner of the type that's being changed (e.g. you own the User type). But if that's the case, you could just make User a type-alias of Group. In the future, we could even consider providing special tools to say "create a type that's the common denominator of types X, Y, and Z" - i.e. the resulting type must satisfy all 3, but not allow you to provide any optional fields that isn't present in all 3 - this would allow the type to be used by any functions that accept X, Y, or Z. Though that's extremely niche and likely not that useful.
+
+Notes on how the language handles it:
+  * I allow values to declare that they're subtypes of other types. This advance declaration ensures the subtype doesn't sprout properties the supertype does not have, making it safe for the supertype to be used wherever the subtype is expected.
+  * If I were to introduce interfaces or inheritance (where the inheritance inherits a branding), then I would make it so those interfaces/super classes can only be implemented/extended from within the same package in which they were defined in. So if the interface/super class needs to sprout new optional properties, you can verify that all consumption sights are safe.
+
+
+## The "no new dead code" policy.
+
+Theoretically, the removal of information (properties, parameters, union variants) could just happen without causing any breaking changes (duck-typed languages do this all the time), but a number of issues can arise if you really do consider any kind of type-shrink to be backwards compatible.
+  * (not a strong reason, but added here for completion sake) It's messy to leave behind dead code on the end-user's side.
+  * It really weakens the type system if we actually permit this. We can't warn you if you're obeying requirements that do not exist (adding extra unnecessary properties, calling a function with too many arguments, handling a non-existent union variant) because maybe those things may have existed in the past and your existing code is just still looking for them.
+  * The ability to specify more than what the type provides goes against the "exact construction" policy - you can't safely grow these types without conflict.
+  * It's difficult to make a subtype of an existing type if that existing type could suddenly remove properties.
+
+For this reason, the only safe way to "remove" information is to make it optional and mark it as deprecated (or for unions, just leave it in and mark it as deprecated). In the future, if AST transformations is supported, a library author could provide an AST transformation to auto-remove the dead code from consumers.
+Note: There's a lot of overlap with the "no new dead code" policy and the "exact construction" policy in that one of the major reasons for "no new dead code" is to prevent "exact construction" violations. But there's other important reasons for "no new dead code" as well.
+
+
+## The "Separation of type construction and consumption" policy.
+
+Publicly exposing the ability to both construct and consume a type at the same time is dangerous. The language should either make this opt-in or not allow it to happen at all. If it is opt-in, the language should also be providing good alternative options to avoid users from feeling forced to use it when they shouldn't need to.
+* If an end-user is allowed to construct but not consume a type, then the type author can perform "construction-safe" changes.
+* If an end-user is allowed to consume but not construct a type, then the type author can perform "consumption-safe" changes.
+* If an end-user is allowed to both create and consume a type, then the only changes allowed are ones that are both "construction-safe" and "consumption-safe" (consisting of adding optional properties or parameters, or adding to an open union). This scenario should be avoided or confined to a small scope of code - you can get around it by splitting constructions and usage into two different types - this is basically what classes do, if you do `Thing.new(value { ... })`, the value you provide to the constructor can be constructed, but not consumed, and what's returned from `Thing.new()` can be consumed, but not constructed.
+  The language currently conforms to this policy by:
+    * encouraging the use of classes, which gives you lots of control over who can use what properties and who can construct a new instance (the new function can be access-controlled).
+    * The argument-list type for a class constructor is typically not publicly exported (it can be used without being exported). This is important - you don't want the end-user to start using that type out-of-context, inventing their own functions that also require that type, or this rule would be violated and it will be difficult to safely change the type. The implication is if something needs to be passed into the constructor, you have to do so directly - you can't store it in an intermediate variable first, since you don't have a type available for that kind of action.
+      - In the future, I could lighten the restriction a bit and let you store it in a local variable, using `ParamType<...>` for the type, but you will not be allowed to consume the type after constructing it. Or, if you do consume it, it's because you're actually consuming a more specific variant (i.e. the type author could make a required parameter into an optional one, but on your end, you'll still consume it as if it was required if it's known that you initialized the value with that property). You wouldn't be able to use `ParamType<...>` in a function parameter location or anything like that either, it has to be local.
+    * When classes aren't used, heavy restrictions are applied to limit power. For example, a function may allow you to provide a raw `value { ... }` into it, but you're not allowed to access the properties of that raw `value { ... }`.
+
+Note: Function types are interesting - if someone implements it, they're "consuming" the parameter list while "constructing" the return type. If someone uses it, they "construct" the parameter list while "consuming" the return type.
+!!!!!!!!!!!!!!! I'm not sure this policy's examples are fully fleshed out with how the language is handling it - I'll need to go back to it.
+!!!!!!!!! Perhaps exposing both construction and consumption isn't as bad as I'm making it out to be. For object types, if you expose both construction and consumption instead of just construction, the only thing you loose is the ability to make a required property optional.
+
+
+## The "exclusive union" policy.
+
+If a language has both unions and interfaces/super classes, then care needs to be taken to handle the scenario where a value is provided that conforms to multiple variants in the union. Would this surprise the users consuming the union and cause their code to break?
+
+
+## The "dependency exposure" policy.
+
+NOTE: I haven't really designed for this policy yet, but it is something I would like to consider eventually. It delves more into package-management, which I haven't started designing yet.
+
+You're not allowed to directly expose dependencies from a third-party library (including errors) unless you opt into it. You have to opt into every library separately. Reasons:
+  * Exposing their API surface area means you lock yourself into their breaking changes. Any time they make a breaking change, you have to make the same breaking change if it's to one of the objects you expose. You also need to expose the same code-mods they expose, when applicable.
+  * Things get messy if your end-user depends on both you and your dependency, but they depend on a different version of the dependency. Perhaps it's reconciled by providing two copies of the dependency - we'll have to see, dependency management, including peer dependencies and such, is TBD.
+
+
+
+
+========== meta ==========
+
+Mission:
+* I'm trying to find a "normalized" way to write code. Basically, I'm taking "one obvious way to do it" to the extreme, even if it makes things more verbose. Once I understand how to code in a normalized fashion, I can layer on top various helpers to make it easier to work with it, or I can provide alternative ways to do something if I also provide clear guidelines on when to break from the norm.
+* Focus heavily on backwards compatibility. Part of the reason I care about backwards compatibility is because I view it as a design smell if something isn't backwards compatible that could be - it means something about the design of the language is off - it's not letting you express things in the proper semantics, meaning its abstractions are wrong. Don't follow backwards compatibility at all costs - the "no new dead code" policy is a good exception where backwards compatibility would cost type-system safety.
+
+What would be "The Zen of Foundation"? (Remember that the zen refers to both user code and the language design).
+* One obvious way to do it (with caveats - there's always a degree of abstraction lever you can mess with. A better precept would be "there shouldn't be multiple language features / user functions that solve the same problem, unless there's also clear guidelines on when to use which").
+* type-safety
+* Explicit better than implicit (probably caveats to this as well)
+
