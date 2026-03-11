@@ -1,6 +1,6 @@
 import { buildErrorWithUnderlinedText } from './errorFormatter.ts';
-import type { ExpressionNode, FnNode, IdentifierNode } from './parser';
-import type { Range } from './shared';
+import type { ExpressionNode, FnNode, IdentifierNode } from './parser.ts';
+import type { Range } from './shared.ts';
 import { throwIndexOutOfBounds, UnreachableCaseError } from './util.ts';
 
 interface StackEntry {

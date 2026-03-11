@@ -5,15 +5,7 @@
   "author": "Scotty Jamison",
   "type": "module",
   "keywords": [],
-  "files": [
-    "/build"
-  ],
-  "main": "build/src/index.js",
-  "imports": {
-    "#src/*": "./build/src/*"
-  },
   "scripts": {
-    "prepublishOnly": "source $HOME/.nvm/nvm.sh && npm run lint && npm test",
     "start": "node ./main.js",
     "test": "mocha",
     "test:watch": "nodemon --watch ./src --watch ./test --ext ts --exec 'mocha'",
@@ -31,8 +23,5 @@
     "mocha": "^10.2.0",
     "nodemon": "^3.0.1",
     "typescript": "^5.8.3"
-  },
-  "engines": {
-    "node": ">=18.12.0"
   }
 }
