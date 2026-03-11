@@ -1,8 +1,0 @@
-Foundation is a proof engine who's primary goal is to allow you to prove that an implementation conforms to specifications.
-
-More details:
-* The implementation must conform to a compilation specification, so a compiler can run over it and produce an executable artifact.
-  * This means there may be third party specifications. Some can be standard ones that multiple tools know how to use, some can be specific to a given tool.
-* There can be multiple implementations and multiple specifications in the same data graph.
-* Specifications can have specifications.
-
