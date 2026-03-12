@@ -1,12 +1,20 @@
 {
   "relationships": [
-    { "##type": "R:Natural#previous", "Natural#target": "1", "Natural#previous": "0" },
-    { "##type": "R:Natural#previous", "Natural#target": "2", "Natural#previous": "1" },
-    { "##type": "R:Natural#previous", "Natural#target": "3", "Natural#previous": "2" },
-    { "##type": "R:output", "output#value": "3" }
+    { "##relationshipType": "R:type", "type#target": "0", "type#type": "Natural" },
+    { "##relationshipType": "R:type", "type#target": "1", "type#type": "Natural" },
+    { "##relationshipType": "R:type", "type#target": "2", "type#type": "Natural" },
+    { "##relationshipType": "R:type", "type#target": "3", "type#type": "Natural" },
+    { "##relationshipType": "R:Natural#previous", "Natural#target": "1", "Natural#previous": "0" },
+    { "##relationshipType": "R:Natural#previous", "Natural#target": "2", "Natural#previous": "1" },
+    { "##relationshipType": "R:Natural#previous", "Natural#target": "3", "Natural#previous": "2" },
+    { "##relationshipType": "R:output", "output#value": "3" }
   ],
   "links": {
-    "1c6c63c0-c0ae-4a64-af72-ed32de0de764": "##type",
+    "0f7b46ea-451d-40f2-9a34-3a4530667814": "Natural",
+    "1c6c63c0-c0ae-4a64-af72-ed32de0de764": "##relationshipType",
+    "5bc48f39-0abd-4fad-8b55-9cdc18a01ef0": "R:type",
+    "258e9ab7-b7fb-4697-891c-9962cac9ab69": "type#target",
+    "fe775f8a-2f8a-49e4-a079-6d9234b9354a": "type#type",
     "10037d13-bbd0-4f60-8e47-7b1635e620f4": "R:Natural#previous",
     "7edaef67-1e08-4472-95a9-89a212e6504c": "Natural#target",
     "1a3fbabd-02e6-427b-9f46-2c20b16d71e4": "Natural#previous",
