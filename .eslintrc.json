@@ -5,6 +5,7 @@
   },
   "parser": "@typescript-eslint/parser",
   "plugins": ["@typescript-eslint"],
+  "ignorePatterns": ["build.js"],
   "rules": {
     "@typescript-eslint/semi": [2, "always"],
     "@typescript-eslint/space-before-function-paren": [2, { "anonymous": "never", "named": "never", "asyncArrow": "always" }],

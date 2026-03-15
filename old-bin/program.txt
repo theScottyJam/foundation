@@ -1,5 +1,5 @@
-////// <-- Make and/or/not/true/false builtin? Or provide a way to register their definitions?
-// assume type stdThrow(<true>) -> @infer //////////// <--
+////// < -- Make and/or/not/true/false builtin? Or provide a way to register their definitions?
+// assume type stdThrow(<true>) -> @infer //////////// < --
 
 // type true(<true> ##T, <true>) -> check($, is##T)
 let true = fn #true (ifTrue, ifFalse) { ifTrue }
@@ -13,7 +13,7 @@ let never = stdThrow(fn (_) { _ })
 // type none(<true>) -> @never
 let none = fn #none (_) { never }
 
-/////////// <-- How to type-check this?
+/////////// < -- How to type-check this?
 let check = fn (value, isFn) { isFn(value, true, false) }
 
 // type if(<isBool($)>, <true> ##T, <true> ##F) -> or(check($, is##T), check($, is##F))
@@ -21,7 +21,7 @@ let check = fn (value, isFn) { isFn(value, true, false) }
 // type if(<check($, is#false)>, <true>, <true> ##F) -> check($, is##F)
 let if = fn (cond, ifTrue, ifFalse) { cond(ifTrue, ifFalse) }
 
-// <-- Is there a non-verbose way to define this?
+// < -- Is there a non-verbose way to define this?
 let if2 = fn (cond, ifTrue, cond2, ifTrue2, ifFalse2) { cond(ifTrue, cond2(ifTrue2, ifFalse2)) }
 
 // type and(<isBool($)>, <isBool($)>) -> isBool($)
@@ -33,8 +33,8 @@ let or = fn(a, b) { if(a, true, b) }
 // type not(<isBool($)>) -> isBool($)
 let not = fn(a) { if(a, false, true) }
 
-// type isBool(<true>) -> isBool($) // <-- note: All type-checking functions return a boolean, this one just happens to also define what a boolean is, which is a bit of an issue.
-// type isBool(<true>) -> @infer // <-- How to handle type-check functions?
+// type isBool(<true>) -> isBool($) // < -- note: All type-checking functions return a boolean, this one just happens to also define what a boolean is, which is a bit of an issue.
+// type isBool(<true>) -> @infer // < -- How to handle type-check functions?
 let isBool = fn (x) { or(check(x, is#true), check(x, is#false)) }
 
 let logBool = fn (bool) { stdLogNat(bool(1, 0)) }

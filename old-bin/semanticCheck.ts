@@ -101,7 +101,7 @@ function checkSemantics_(ctx: SemanticContext, astNode: ExpressionNode) {
     }
 
     // Associate this node with the found variable id
-    ctx.identifierNodeToVarId.set(astNode, varId); // <-- Shouldn't be needed - it's not a "declaring" identifier node.
+    ctx.identifierNodeToVarId.set(astNode, varId); // < -- Shouldn't be needed - it's not a "declaring" identifier node.
 
     // Record in every intermediate function that this variable needs to be captured in the closure.
     while (true) {

@@ -6,11 +6,11 @@
   "type": "module",
   "keywords": [],
   "scripts": {
-    "start": "node ./main.js",
+    "start": "node ./main.js && echo '----- EXEC -----' && node ./build.js",
     "test": "mocha",
     "test:watch": "nodemon --watch ./src --watch ./test --ext ts --exec 'mocha'",
-    "lint": "eslint test/*.ts src/*.ts",
-    "lint:fix": "eslint test/*.ts src/*.ts --fix"
+    "lint": "eslint test/*.ts src/*.ts --ignore-pattern build.js",
+    "lint:fix": "eslint test/*.ts src/*.ts --ignore-pattern build.js --fix"
   },
   "license": "MIT",
   "devDependencies": {
