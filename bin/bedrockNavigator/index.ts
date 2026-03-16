@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-type Relationship = Record<string, string>;
+export type Relationship = Record<string, string>;
 
 export interface BedrockData {
   readonly relationships: Relationship[]
@@ -150,6 +150,20 @@ export class ConditionalRelationshipSchema<Fields extends string> {
     this.fieldNameToId = this.#schema.fieldNameToId;
   }
 
+  parse(relationship: Relationship): ConditionallyParsedRelationship<Fields> {
+    const parsedRelationship = this.#schema.parse(relationship);
+    const { relationshipId, ...remainingFields } = parsedRelationship.fields;
+    return {
+      relationshipId,
+      fields: Object.fromEntries(
+        Object.entries<NodeId>(remainingFields).map(([key, value]) => {
+          return [key, identifyConditionalValue(this.#nav, value)];
+        }),
+      ) as Record<Fields, ConditionalFieldValue>,
+      raw: parsedRelationship.raw,
+    } satisfies ConditionallyParsedRelationship<Fields>;
+  }
+
   /**
    * List relationships of this type.
    * A relationship will only be included in this list if
@@ -158,7 +172,6 @@ export class ConditionalRelationshipSchema<Fields extends string> {
   listTrueParsedRelationships(): ConditionallyParsedRelationship<Fields>[] {
     return this.#schema.listParsedRelationships()
       .filter(parsedRelationship => {
-        assert(this.#nav.isRule !== undefined);
         return this.#nav.isRule(parsedRelationship.fields.relationshipId);
       })
       .map(parsedRelationship => {
@@ -177,9 +190,20 @@ export class ConditionalRelationshipSchema<Fields extends string> {
 
   static assertAllValues<Fields extends string>(
     parsedRelationship: ConditionallyParsedRelationship<Fields>,
-  ): ConditionallyParsedRelationship<Fields> & { fields: Record<string, { type: 'value' }> } {
+  ): ConditionallyParsedRelationship<Fields> & { fields: Record<Fields, { type: 'value' }> } {
     for (const [key, maybeValue] of Object.entries<ConditionalFieldValue>(parsedRelationship.fields)) {
-      assert(maybeValue.type === 'value', `Expected the value to not be based on a condition. Key "${key}" in ${JSON.stringify(parsedRelationship)}`);
+      assert(maybeValue.type === 'value', `Expected the value to not be based on a condition. Key "${key}" in ${JSON.stringify(parsedRelationship.raw)}`);
+    }
+
+    return parsedRelationship as any;
+  }
+
+  /** Should be used on boolean operators, since their operands should only be expressions. */
+  static assertAllExpressions<Fields extends string>(
+    parsedRelationship: ConditionallyParsedRelationship<Fields>,
+  ): ConditionallyParsedRelationship<Fields> & { fields: Record<Fields, { type: 'expression' }> } {
+    for (const [key, maybeValue] of Object.entries<ConditionalFieldValue>(parsedRelationship.fields)) {
+      assert(maybeValue.type === 'expression', `Expected the operand to link to another expression. Key "${key}" in ${JSON.stringify(parsedRelationship.raw)}`);
     }
 
     return parsedRelationship as any;

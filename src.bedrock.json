@@ -34,26 +34,6 @@
     { "##relationshipType": "R:Natural#next", "Natural#next#target": "2", "Natural#next#next": "3", "##relationshipId": "Natural#next:ri-2" },
 
     "PICK END",
-    { "##relationshipType": "R:rule", "rule#target": "rid-result-1" },
-    { "##relationshipType": "R:rule", "rule#target": "rid-result-2" },
-    { "##relationshipType": "R:declareVar", "declareVar#target": "$root" },
-    { "##relationshipType": "R:Natural#next", "Natural#next#target": "2", "Natural#next#next": "$root", "##relationshipId": "rid-result-1" },
-    { "##relationshipType": "R:programExit", "output#value": "$root", "##relationshipId": "rid-result-2" }
-  ],
-
-  "_end1": [
-    { "##relationshipType": "R:rule", "rule#target": "rid-result-2" },
-    { "##relationshipType": "R:programExit", "output#value": "3", "##relationshipId": "rid-result-2" }
-  ],
-  "_end2": [
-    { "##relationshipType": "R:rule", "rule#target": "rid-result-1" },
-    { "##relationshipType": "R:rule", "rule#target": "rid-result-2" },
-    { "##relationshipType": "R:declareVar", "declareVar#target": "$root" },
-    { "##relationshipType": "R:Natural#next", "Natural#next#target": "2", "Natural#next#next": "$root", "##relationshipId": "rid-result-1" },
-    { "##relationshipType": "R:programExit", "output#value": "$root", "##relationshipId": "rid-result-2" }
-  ],
-
-  "__relationships": [
     "Variable declarations",
     { "##relationshipType": "R:declareVar", "declareVar#target": "sum:$a" },
     { "##relationshipType": "R:declareVar", "declareVar#target": "sum:$b" },
@@ -74,15 +54,15 @@
     "if ... then ... else ... end - this AND separates the `if` from the `else`",
     { "##relationshipType": "R:and", "and#left": "sum:ri.a-r.a-l", "and#right": "sum:ri.a-r.a-r", "##relationshipId": "sum:ri.a-r" },
     "if ... then ...",
-    { "##relationshipType": "R:then", "and#left": "sum:ri.a-r.a-l.t-l", "and#right": "sum:ri.a-r.a-l.t-r", "##relationshipId": "sum:ri.a-r.a-l" },
+    { "##relationshipType": "R:then", "then#left": "sum:ri.a-r.a-l.t-l", "then#right": "sum:ri.a-r.a-l.t-r", "##relationshipId": "sum:ri.a-r.a-l" },
     "[if] $b is 0 [then ... else ... end]",
     { "##relationshipType": "R:is", "is#left": "sum:$b", "is#right": "0", "##relationshipId": "sum:ri.a-r.a-l.t-l" },
     "[if ... then] $return $a [else ... end]",
-    { "##relationshipType": "R:is", "is#left": "sum:$a", "is#right": "sum:$return", "##relationshipId": "sum:ri.a-r.a-l.t-r" },
+    { "##relationshipType": "R:is", "is#left": "sum:$return", "is#right": "sum:$a", "##relationshipId": "sum:ri.a-r.a-l.t-r" },
     "[if ... then ...] else [...]",
-    { "##relationshipType": "R:then", "and#left": "sum:ri.a-r.a-r.t-l", "and#right": "sum:ri.a-r.a-r.t-r", "##relationshipId": "sum:ri.a-r.a-r" },
+    { "##relationshipType": "R:then", "then#left": "sum:ri.a-r.a-r.t-l", "then#right": "sum:ri.a-r.a-r.t-r", "##relationshipId": "sum:ri.a-r.a-r" },
     "else - de-surgers to `if not ...` - this is the NOT. The NOT operand links to the original IF condition.",
-    { "##relationshipType": "R:not", "and#right": "sum:ri.a-r.a-l.t-l", "##relationshipId": "sum:ri.a-r.a-r.t-l" },
+    { "##relationshipType": "R:not", "not#right": "sum:ri.a-r.a-l.t-l", "##relationshipId": "sum:ri.a-r.a-r.t-l" },
     "[... else previous(#target=$b, $previous=$bPrevious)] and [sum(#left=$a, #right=$bPrevious, #out=$result) ...]",
     { "##relationshipType": "R:and", "and#left": "sum:ri.a-r.a-r.t-r.a-l", "and#right": "sum:ri.a-r.a-r.t-r.a-r", "##relationshipId": "sum:ri.a-r.a-r.t-r" },
     "previous(#target=$b, $previous=$bPrevious)]",
@@ -94,7 +74,71 @@
     "[... previous(#target=$resultNext, $previous=$result)] and [$return is $resultNext end]",
     { "##relationshipType": "R:and", "and#left": "sum:ri.a-r.a-r.t-r.a-r.a-r.a-l", "and#right": "sum:ri.a-r.a-r.t-r.a-r.a-r.a-r", "##relationshipId": "sum:ri.a-r.a-r.t-r.a-r.a-r" },
     "previous(#target=$resultNext, $previous=$result)",
-    { "##relationshipType": "R:Natural#next", "Natural#next#target": "sum:$result", "Natural#next#next": "sum:$resultNext", "##relationshipId": "sum:ri.a-r.a-r.t-r.a-r.a-r" },
+    { "##relationshipType": "R:Natural#next", "Natural#next#target": "sum:$result", "Natural#next#next": "sum:$resultNext", "##relationshipId": "sum:ri.a-r.a-r.t-r.a-r.a-r.a-l" },
+    "$return is $resultNext",
+    { "##relationshipType": "R:is", "is#left": "sum:$return", "is#right": "sum:$resultNext", "##relationshipId": "sum:ri.a-r.a-r.t-r.a-r.a-r.a-r" },
+
+    { "##relationshipType": "R:rule", "rule#target": "rid-result-1" },
+    { "##relationshipType": "R:rule", "rule#target": "rid-result-2" },
+    { "##relationshipType": "R:declareVar", "declareVar#target": "$root" },
+    { "##relationshipType": "R:sum", "sum#left": "2", "sum#right": "1", "sum#out": "$root", "##relationshipId": "rid-result-1" },
+    { "##relationshipType": "R:programExit", "output#value": "$root", "##relationshipId": "rid-result-2" }
+  ],
+
+  "_end1": [
+    { "##relationshipType": "R:rule", "rule#target": "rid-result-2" },
+    { "##relationshipType": "R:programExit", "output#value": "3", "##relationshipId": "rid-result-2" }
+  ],
+  "_end2": [
+    { "##relationshipType": "R:rule", "rule#target": "rid-result-1" },
+    { "##relationshipType": "R:rule", "rule#target": "rid-result-2" },
+    { "##relationshipType": "R:declareVar", "declareVar#target": "$root" },
+    { "##relationshipType": "R:Natural#next", "Natural#next#target": "2", "Natural#next#next": "$root", "##relationshipId": "rid-result-1" },
+    { "##relationshipType": "R:programExit", "output#value": "$root", "##relationshipId": "rid-result-2" }
+  ],
+
+  "_end3": [
+    "Variable declarations",
+    { "##relationshipType": "R:declareVar", "declareVar#target": "sum:$a" },
+    { "##relationshipType": "R:declareVar", "declareVar#target": "sum:$b" },
+    { "##relationshipType": "R:declareVar", "declareVar#target": "sum:$return" },
+    { "##relationshipType": "R:declareVar", "declareVar#target": "sum:$bPrevious" },
+    { "##relationshipType": "R:declareVar", "declareVar#target": "sum:$result" },
+    { "##relationshipType": "R:declareVar", "declareVar#target": "sum:$resultNext" },
+    "Registers the root rule node.",
+    { "##relationshipType": "R:rule", "rule#target": "sum:ri" },
+    "AND to join the definition with everything else.",
+    { "##relationshipType": "R:and", "and#left": "sum:ri.a-l", "and#right": "sum:ri.a-r", "##relationshipId": "sum:ri" },
+    "def (#left $a, $right $b, #out $return)",
+    { "##relationshipType": "R:input", "input#target": "sum#left" },
+    { "##relationshipType": "R:input", "input#target": "sum#right" },
+    { "##relationshipType": "R:output", "output#target": "sum#out" },
+    { "##relationshipType": "R:declareTypeSignature", "declareTypeSignature#target": "sum:ri.a-l" },
+    { "##relationshipType": "R:sum", "sum#left": "sum:$a", "sum#right": "sum:$b", "sum#out": "sum:$return", "##relationshipId": "sum:ri.a-l" },
+    "if ... then ... else ... end - this AND separates the `if` from the `else`",
+    { "##relationshipType": "R:and", "and#left": "sum:ri.a-r.a-l", "and#right": "sum:ri.a-r.a-r", "##relationshipId": "sum:ri.a-r" },
+    "if ... then ...",
+    { "##relationshipType": "R:then", "then#left": "sum:ri.a-r.a-l.t-l", "then#right": "sum:ri.a-r.a-l.t-r", "##relationshipId": "sum:ri.a-r.a-l" },
+    "[if] $b is 0 [then ... else ... end]",
+    { "##relationshipType": "R:is", "is#left": "sum:$b", "is#right": "0", "##relationshipId": "sum:ri.a-r.a-l.t-l" },
+    "[if ... then] $return $a [else ... end]",
+    { "##relationshipType": "R:is", "is#left": "sum:$return", "is#right": "sum:$a", "##relationshipId": "sum:ri.a-r.a-l.t-r" },
+    "[if ... then ...] else [...]",
+    { "##relationshipType": "R:then", "then#left": "sum:ri.a-r.a-r.t-l", "then#right": "sum:ri.a-r.a-r.t-r", "##relationshipId": "sum:ri.a-r.a-r" },
+    "else - de-surgers to `if not ...` - this is the NOT. The NOT operand links to the original IF condition.",
+    { "##relationshipType": "R:not", "not#right": "sum:ri.a-r.a-l.t-l", "##relationshipId": "sum:ri.a-r.a-r.t-l" },
+    "[... else previous(#target=$b, $previous=$bPrevious)] and [sum(#left=$a, #right=$bPrevious, #out=$result) ...]",
+    { "##relationshipType": "R:and", "and#left": "sum:ri.a-r.a-r.t-r.a-l", "and#right": "sum:ri.a-r.a-r.t-r.a-r", "##relationshipId": "sum:ri.a-r.a-r.t-r" },
+    "previous(#target=$b, $previous=$bPrevious)]",
+    { "##relationshipType": "R:Natural#previous", "Natural#previous#target": "sum:$b", "Natural#previous#previous": "sum:$bPrevious", "##relationshipId": "sum:ri.a-r.a-r.t-r.a-l" },
+    "[... sum(#left=$a, #right=$bPrevious, #out=$result)] and [previous(#target=$resultNext, $previous=$result) ...]",
+    { "##relationshipType": "R:and", "and#left": "sum:ri.a-r.a-r.t-r.a-r.a-l", "and#right": "sum:ri.a-r.a-r.t-r.a-r.a-r", "##relationshipId": "sum:ri.a-r.a-r.t-r.a-r" },
+    "sum(#left=$a, #right=$bPrevious, #out=$result)",
+    { "##relationshipType": "R:sum", "sum#left": "sum:$a", "sum#right": "sum:$bPrevious", "sum#out": "sum:$result", "##relationshipId": "sum:ri.a-r.a-r.t-r.a-r.a-l" },
+    "[... previous(#target=$resultNext, $previous=$result)] and [$return is $resultNext end]",
+    { "##relationshipType": "R:and", "and#left": "sum:ri.a-r.a-r.t-r.a-r.a-r.a-l", "and#right": "sum:ri.a-r.a-r.t-r.a-r.a-r.a-r", "##relationshipId": "sum:ri.a-r.a-r.t-r.a-r.a-r" },
+    "previous(#target=$resultNext, $previous=$result)",
+    { "##relationshipType": "R:Natural#next", "Natural#next#target": "sum:$result", "Natural#next#next": "sum:$resultNext", "##relationshipId": "sum:ri.a-r.a-r.t-r.a-r.a-r.a-l" },
     "$return is $resultNext",
     { "##relationshipType": "R:is", "is#left": "sum:$return", "is#right": "sum:$resultNext", "##relationshipId": "sum:ri.a-r.a-r.t-r.a-r.a-r.a-r" },
 
@@ -125,6 +169,17 @@
     "7edaef67-1e08-4472-95a9-89a212e6504c": "Natural#previous#target",
     "1a3fbabd-02e6-427b-9f46-2c20b16d71e4": "Natural#previous#previous",
     "86b33c24-e4c1-4790-a4d9-1c8af3030b34": "R:programExit",
-    "381dde34-25e1-4c1b-a3f3-762d9ada9f9c": "output#value"
+    "381dde34-25e1-4c1b-a3f3-762d9ada9f9c": "output#value",
+    "876a450c-778d-44a3-aae4-e4abd21b6cf0": "R:and",
+    "96a0773b-d697-4397-a83e-c5dccb4287d9": "and#left",
+    "46560cd5-7339-4755-86bf-2ec963b6dfec": "and#right",
+    "5833f84b-7ec6-4c14-b9b4-6afa554987ce": "R:not",
+    "52acc525-0ddf-4b4f-acac-4c92c45fd2a5": "not#right",
+    "0c715b0f-0beb-41ea-809a-cbb0a4e4ab4d": "R:then",
+    "2fb3e027-21cd-4dc7-95ec-e73a3956f1f9": "then#left",
+    "73528fa9-2ce9-432c-962a-365c337406c8": "then#right",
+    "4b33c2ce-1303-40d6-8053-237ae570c5b4": "R:is",
+    "facdc04f-fbc0-489d-88a5-5f59f8eb624e": "is#left",
+    "c1fbd400-9fe0-47f6-80db-da450e246011": "is#right"
   }
 }
