@@ -1,0 +1,5 @@
+def thing
+def anotherThing with {
+  // Trailing commas are supported
+  is(left=self(a=1, b=2)->result, right=3)->result
+}

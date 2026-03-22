@@ -1,3 +1,5 @@
 node_modules
 build
 build.js
+example.blueprint
+example.bedrock.json

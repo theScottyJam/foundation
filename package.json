@@ -6,7 +6,8 @@
   "type": "module",
   "keywords": [],
   "scripts": {
-    "start": "node ./main.js && echo '----- EXEC -----' && node ./build.js",
+    "start": "node ./main.js",
+    "_start": "node ./main.js && echo '----- EXEC -----' && node ./build.js",
     "test": "mocha",
     "test:watch": "nodemon --watch ./src --watch ./test --ext ts --exec 'mocha'",
     "lint": "eslint test/*.ts src/*.ts --ignore-pattern build.js",

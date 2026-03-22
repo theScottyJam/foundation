@@ -1,10 +1,10 @@
 import type { Position, Token } from './shared.ts';
-import { assert, throwIndexOutOfBounds } from './util.ts';
+import { assert, throwIndexOutOfBounds } from '../util.ts';
 
 // EOF is represented by the empty string
 export const EOF = '';
 
-export const RESERVED_CHARS = ['(', ')', '{', '}', ',', '=', '#'];
+export const RESERVED_CHARS = ['(', ')', '{', '}', '=', ',', '.', ':', '-', '>'];
 
 export class Tokenizer {
   text: string;
@@ -18,7 +18,7 @@ export class Tokenizer {
   }
 
   peek(): Token {
-    return this.#tokens[0]!;
+    return this.#tokens[0] ?? throwIndexOutOfBounds();
   }
 
   next(): Token {
