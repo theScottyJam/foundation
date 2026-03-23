@@ -1,8 +1,9 @@
+// TODO: I'm not really handling unexpected EOF errors very well.
 import { buildErrorWithUnderlinedText } from './errorFormatter.ts';
-import type { Range } from './shared.ts';
+import type { Position, Range } from './shared.ts';
 import { EOF, RESERVED_CHARS, Tokenizer } from './Tokenizer.ts';
 import { throwIndexOutOfBounds } from '../util.ts';
-import type { ParseContext, VarDef, IdentifierNode, Relationship, MutableRelationship } from './parserTools.ts';
+import type { ParseContext, VarDef, IdentifierNode, Relationship, MutableRelationship, IdentifierSeries } from './parserTools.ts';
 import * as tools from './parserTools.ts';
 import { registerStdLibLinks } from './stdLibLinks.ts';
 
@@ -11,7 +12,7 @@ interface BedrockData {
   readonly links: Record<string, string>
 }
 
-export const KEYWORDS = ['def', 'with'];
+export const KEYWORDS = ['def', 'link'];
 
 export function parse(text: string): BedrockData {
   const ctx_: Omit<ParseContext, 'stdLibLinks'> = {
@@ -80,6 +81,10 @@ function parseStatement(ctx: ParseContext): Relationship[] {
   if (ctx.tokenizer.peek().value === 'def') {
     return parseDefinition(ctx);
   }
+  if (ctx.tokenizer.peek().value === 'link') {
+    parseLink(ctx);
+    return [];
+  }
 
   const { relationships, returnedVarId } = parseExpression(ctx, { inStatementPos: true });
   return [
@@ -103,21 +108,23 @@ function parseDefinition(ctx: ParseContext): Relationship[] {
     ctx.reportError('This identifier has been declared twice in the same scope.', identifierNode.range);
   }
 
-  const def: VarDef = { id, label: identifierNode.identifier, varsInScope: new Map() };
+  const def: VarDef = { id, label: identifierNode.identifier, varsInModule: new Map() };
   currentScope.labelToDef.set(identifierNode.identifier, def);
   ctx.varIdToLabel.set(id, identifierNode.identifier);
 
-  if (ctx.tokenizer.peek().value !== 'with') {
+  // Adding `self` is useful if you're in the module and wish to reference itself.
+  // It's a little unfortunate that this also make it so you can do theModule.self. Not something I'll worry about for now.
+  def.varsInModule.set('self', def);
+
+  if (ctx.tokenizer.peek().value !== '{') {
     return [];
   }
-  ctx.tokenizer.next();
 
   return tools.enterScope(
     ctx,
     {
-      labelToDef: new Map([
-        ['self', def],
-      ]),
+      // If labelToDef is mutated and items are added, they'll be added to def.varsInModule.
+      labelToDef: def.varsInModule,
     },
     () => {
       ctx.assertToken(ctx, ['{']).next();
@@ -126,6 +133,34 @@ function parseDefinition(ctx: ParseContext): Relationship[] {
       return result;
     },
   );
+}
+
+function parseLink(ctx: ParseContext) {
+  const start = ctx.tokenizer.peek().range.start;
+  ctx.assertToken(ctx, ['link']).next();
+
+  let uuid = '';
+  let end!: Position;
+  while (true) {
+    end = ctx.tokenizer.peek().range.end;
+    uuid += ctx.tokenizer.next().value;
+    if (ctx.tokenizer.peek().value === '-') {
+      ctx.tokenizer.next();
+      uuid += '-';
+    } else {
+      break;
+    }
+  }
+
+  const varDef = tools.tryLookupVar(ctx, 'self');
+  if (varDef === undefined) {
+    ctx.reportError('Can only use the "link" syntax inside a var def', { start, end });
+  }
+  if ([...ctx.links.values()].some(iterUuid => iterUuid === uuid)) {
+    ctx.reportError('This UUID has been defined on multiple entities.', { start, end });
+  }
+
+  ctx.links.set(varDef.id, uuid);
 }
 
 interface ExpressionNode {
@@ -138,23 +173,23 @@ function parseExpression(ctx: ParseContext, opts: { inStatementPos?: boolean } =
   const { inStatementPos = false } = opts;
 
   if (nextTokenIsValidIdentifier(ctx)) {
-    const identifierNode = parseIdentifier(ctx);
+    const identifierSeries = parseIdentifierSeries(ctx);
     if (ctx.tokenizer.peek().value === '(') {
-      return parseFunctionCall(ctx, identifierNode);
+      return parseFunctionCall(ctx, identifierSeries);
     }
     if (!inStatementPos) {
-      const varDef = tools.lookupVar(ctx, identifierNode);
-      return { relationships: [], returnedVarId: varDef.id, range: identifierNode.range };
+      const varDef = tools.lookupVarSeries(ctx, identifierSeries);
+      return { relationships: [], returnedVarId: varDef.id, range: identifierSeries.range };
     }
-    ctx.reportError('Expected a statement here.', identifierNode.range);
+    ctx.reportError('Expected a statement here.', identifierSeries.range);
   }
 
   ctx.reportError('Expected a statement here.', ctx.tokenizer.peek().range);
 }
 
 /** Parses the `(a=1, b=2)->c` of `myFn(a=1, b=2)->c`. */
-function parseFunctionCall(ctx: ParseContext, fnNameNode: IdentifierNode): ExpressionNode {
-  const fnDef = tools.lookupVar(ctx, fnNameNode);
+function parseFunctionCall(ctx: ParseContext, fnNameSeries: IdentifierSeries): ExpressionNode {
+  const fnDef = tools.lookupVarSeries(ctx, fnNameSeries);
 
   const start = ctx.tokenizer.peek().range.start;
 
@@ -168,58 +203,73 @@ function parseFunctionCall(ctx: ParseContext, fnNameNode: IdentifierNode): Expre
   const relationship: MutableRelationship = new Map();
   relationship.set(ctx.stdLibLinks.relationshipTypeId, fnDef.id);
 
-  return tools.enterScope(
-    ctx,
-    {
-      // TODO: In the future it would (probably) be better if the only items in scope was whatever the function provided. Right now
-      // you can use anything from outer scopes as well as keys.
-      labelToDef: new Map(fnDef.varsInScope),
-    },
-    () => {
-      while (true) {
-        const keyNode = parseIdentifier(ctx);
-        const keyDef = tools.lookupVar(ctx, keyNode);
-        ctx.assertToken(ctx, ['=']).next();
-        const valueNode = parseExpression(ctx);
-        if (relationship.has(keyDef.id)) {
-          ctx.reportError('This same key got used in this relationship multiple times.', keyNode.range);
-        }
-        relationship.set(keyDef.id, valueNode.returnedVarId);
-        childRelationships.push(...valueNode.relationships);
+  const keyScope: tools.Scope = {
+    labelToDef: new Map(fnDef.varsInModule),
+  };
 
-        const commaFound = ctx.tokenizer.peek().value === ',';
-        if (commaFound) {
-          ctx.tokenizer.next();
-        }
-        if (ctx.tokenizer.peek().value === ')') {
-          ctx.tokenizer.next();
-          break;
-        }
-        if (!commaFound) {
-          const range: Range = { start: keyNode.range.start, end: valueNode.range.end };
-          ctx.reportError('This argument should have a comma after it.', range);
-        }
-      }
+  while (true) {
+    const keyNode = parseIdentifier(ctx);
+    const keyDef = tools.replaceScope(ctx, keyScope, () => {
+      return tools.lookupVar(ctx, keyNode);
+    });
+    ctx.assertToken(ctx, ['=']).next();
+    const valueNode = parseExpression(ctx);
+    if (relationship.has(keyDef.id)) {
+      ctx.reportError('This same key got used in this relationship multiple times.', keyNode.range);
+    }
+    relationship.set(keyDef.id, valueNode.returnedVarId);
+    childRelationships.push(...valueNode.relationships);
 
-      ctx.assertToken(ctx, ['-']).next();
-      ctx.assertToken(ctx, ['>']).next();
+    const commaFound = ctx.tokenizer.peek().value === ',';
+    if (commaFound) {
+      ctx.tokenizer.next();
+    }
+    if (ctx.tokenizer.peek().value === ')') {
+      ctx.tokenizer.next();
+      break;
+    }
+    if (!commaFound) {
+      const range: Range = { start: keyNode.range.start, end: valueNode.range.end };
+      ctx.reportError('This argument should have a comma after it.', range);
+    }
+  }
 
-      const returnParamName = parseIdentifier(ctx);
-      const returnParamDef = tools.lookupVar(ctx, returnParamName);
-      const outputVarId = tools.genNextVarId(ctx);
+  ctx.assertToken(ctx, ['-']).next();
+  ctx.assertToken(ctx, ['>']).next();
 
-      if (relationship.has(returnParamDef.id)) {
-        ctx.reportError('This same key got used in this relationship multiple times.', returnParamName.range);
-      }
-      relationship.set(returnParamDef.id, outputVarId);
+  const returnParamName = parseIdentifier(ctx);
+  const returnParamDef = tools.replaceScope(ctx, keyScope, () => {
+    return tools.lookupVar(ctx, returnParamName);
+  });
+  const outputVarId = tools.genNextVarId(ctx);
 
-      return {
-        relationships: [...childRelationships, relationship],
-        returnedVarId: outputVarId,
-        range: { start, end: returnParamName.range.end },
-      };
-    },
-  );
+  if (relationship.has(returnParamDef.id)) {
+    ctx.reportError('This same key got used in this relationship multiple times.', returnParamName.range);
+  }
+  relationship.set(returnParamDef.id, outputVarId);
+
+  return {
+    relationships: [...childRelationships, relationship],
+    returnedVarId: outputVarId,
+    range: { start, end: returnParamName.range.end },
+  };
+}
+
+function parseIdentifierSeries(ctx: ParseContext): IdentifierSeries {
+  const series: IdentifierNode[] = [];
+  while (true) {
+    series.push(parseIdentifier(ctx));
+    if (ctx.tokenizer.peek().value === ':') {
+      ctx.tokenizer.next();
+    } else {
+      break;
+    }
+  }
+
+  return {
+    series,
+    range: { start: series[0]!.range.start, end: series.at(-1)!.range.end },
+  };
 }
 
 function parseIdentifier(ctx: ParseContext): IdentifierNode {

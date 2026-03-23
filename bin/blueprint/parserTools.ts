@@ -10,7 +10,7 @@ export interface VarDef {
   readonly id: number
   readonly label?: string
   // Maps labels to definitions. May be mutated.
-  readonly varsInScope: Map<string, VarDef>
+  readonly varsInModule: Map<string, VarDef>
 }
 
 export interface Scope {
@@ -23,6 +23,11 @@ export interface IdentifierNode {
   readonly range: Range
 }
 
+export interface IdentifierSeries {
+  readonly series: IdentifierNode[]
+  readonly range: Range
+}
+
 export interface ParseContext {
   readonly tokenizer: Tokenizer
   readonly reportError: (message: string, range: Range) => never
@@ -32,7 +37,7 @@ export interface ParseContext {
   /** May be mutated during parsing */
   readonly links: Map<number, string>
   /** May be mutated during parsing */
-  readonly scopes: Scope[]
+  scopes: Scope[]
   /** May be mutated during parsing */
   nextId: number
 }
@@ -44,16 +49,49 @@ export function enterScope<T>(ctx: ParseContext, scope: Scope, callback: () => T
   return result;
 }
 
+export function replaceScope<T>(ctx: ParseContext, scope: Scope, callback: () => T): T {
+  const oldScopes = ctx.scopes;
+  ctx.scopes = [scope];
+  const result = callback();
+  ctx.scopes = oldScopes;
+  return result;
+}
+
+export function lookupVarSeries(ctx: ParseContext, series: IdentifierSeries): VarDef {
+  const [first = throwIndexOutOfBounds(), ...remaining] = series.series;
+
+  let varDef: VarDef = lookupVar(ctx, first);
+  for (const identifierNode of remaining) {
+    const varDef_ = varDef.varsInModule.get(identifierNode.identifier);
+    if (varDef_ === undefined) {
+      ctx.reportError(`"${identifierNode.identifier}" does not exist.`, identifierNode.range);
+    }
+    varDef = varDef_;
+  }
+
+  return varDef;
+}
+
 export function lookupVar(ctx: ParseContext, identifierNode: IdentifierNode): VarDef {
+  const varDef = tryLookupVar(ctx, identifierNode.identifier);
+
+  if (varDef === undefined) {
+    ctx.reportError(`The identifier ${identifierNode.identifier} was not in scope.`, identifierNode.range);
+  } else {
+    return varDef;
+  }
+}
+
+export function tryLookupVar(ctx: ParseContext, identifier: string): VarDef | undefined {
   for (let i = ctx.scopes.length - 1; i >= 0; i--) {
     const scope = ctx.scopes[i] ?? throwIndexOutOfBounds();
-    const varDef = scope.labelToDef.get(identifierNode.identifier);
+    const varDef = scope.labelToDef.get(identifier);
     if (varDef !== undefined) {
       return varDef;
     }
   }
 
-  ctx.reportError(`The identifier ${identifierNode.identifier} was not in scope.`, identifierNode.range);
+  return undefined;
 }
 
 export function genNextVarId(ctx: Omit<ParseContext, 'stdLibLinks'>) {
