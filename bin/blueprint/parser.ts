@@ -1,8 +1,7 @@
 // TODO: I'm not really handling unexpected EOF errors very well.
-import { buildErrorWithUnderlinedText } from './errorFormatter.ts';
-import type { Position, Range } from './shared.ts';
+import type { Position, Range, Token } from './shared.ts';
 import { EOF, RESERVED_CHARS, Tokenizer } from './Tokenizer.ts';
-import { throwIndexOutOfBounds } from '../util.ts';
+import { assert, throwIndexOutOfBounds } from '../util.ts';
 import type { ParseContext, VarDef, IdentifierNode, Relationship, MutableRelationship, IdentifierSeries } from './parserTools.ts';
 import * as tools from './parserTools.ts';
 import { registerStdLibLinks } from './stdLibLinks.ts';
@@ -17,26 +16,6 @@ export const KEYWORDS = ['def', 'link'];
 export function parse(text: string): BedrockData {
   const ctx_: Omit<ParseContext, 'stdLibLinks'> = {
     tokenizer: new Tokenizer(text),
-    reportError: (message: string, range: Range) => {
-      throw new Error(buildErrorWithUnderlinedText(message, {
-        fileContents: text,
-        start: range.start.index,
-        end: range.end.index,
-      }));
-    },
-    assertToken: (ctx: ParseContext, tokenValues: string[]) => {
-      if (!tokenValues.includes(ctx.tokenizer.peek().value)) {
-        ctx.reportError(`Expected "${ctx.tokenizer.peek().value}" to be one of ${tokenValues.map(t => `"${t}"`).join(', ')}.`, {
-          start: ctx.tokenizer.peek().range.start,
-          end: ctx.tokenizer.peek().range.end,
-        });
-      }
-
-      // Returns a commonly-used follow-on action, to allow it to be easily chained if wanted.
-      return {
-        next: () => ctx.tokenizer.next(),
-      };
-    },
     varIdToLabel: new Map(),
     links: new Map(),
     scopes: [{ labelToDef: new Map() }],
@@ -63,7 +42,7 @@ export function parse(text: string): BedrockData {
       );
     }),
     links: Object.fromEntries(
-      [...ctx.links.entries()].map(([key, value]) => [transformId(key), value]),
+      [...ctx.links.entries()].map(([key, value]) => [key, transformId(value)]),
     ),
   };
 }
@@ -86,26 +65,22 @@ function parseStatement(ctx: ParseContext): Relationship[] {
     return [];
   }
 
-  const { relationships, returnedVarId } = parseExpression(ctx, { inStatementPos: true });
-  return [
-    ...relationships,
-    ctx.stdLibLinks.createRule(returnedVarId),
-  ];
+  return parseExpressionInStatementPos(ctx);
 }
 
 function parseDefinition(ctx: ParseContext): Relationship[] {
-  ctx.assertToken(ctx, ['def']).next();
+  tools.assertToken(ctx, ['def']).next();
 
   const identifierNode = parseIdentifier(ctx);
   const id = tools.genNextVarId(ctx);
 
   if (identifierNode.identifier === 'self') {
-    ctx.reportError('Cannot declare a variable named "self" - it is reserved.', identifierNode.range);
+    tools.reportError(ctx, 'Cannot declare a variable named "self" - it is reserved.', identifierNode.range);
   }
 
   const currentScope = ctx.scopes.at(-1) ?? throwIndexOutOfBounds();
   if (currentScope.labelToDef.has(identifierNode.identifier)) {
-    ctx.reportError('This identifier has been declared twice in the same scope.', identifierNode.range);
+    tools.reportError(ctx, 'This identifier has been declared twice in the same scope.', identifierNode.range);
   }
 
   const def: VarDef = { id, label: identifierNode.identifier, varsInModule: new Map() };
@@ -127,9 +102,9 @@ function parseDefinition(ctx: ParseContext): Relationship[] {
       labelToDef: def.varsInModule,
     },
     () => {
-      ctx.assertToken(ctx, ['{']).next();
+      tools.assertToken(ctx, ['{']).next();
       const result = parseStatementList(ctx, { endAt: '}' });
-      ctx.assertToken(ctx, ['}']).next();
+      tools.assertToken(ctx, ['}']).next();
       return result;
     },
   );
@@ -137,7 +112,7 @@ function parseDefinition(ctx: ParseContext): Relationship[] {
 
 function parseLink(ctx: ParseContext) {
   const start = ctx.tokenizer.peek().range.start;
-  ctx.assertToken(ctx, ['link']).next();
+  tools.assertToken(ctx, ['link']).next();
 
   let uuid = '';
   let end!: Position;
@@ -154,13 +129,13 @@ function parseLink(ctx: ParseContext) {
 
   const varDef = tools.tryLookupVar(ctx, 'self');
   if (varDef === undefined) {
-    ctx.reportError('Can only use the "link" syntax inside a var def', { start, end });
+    tools.reportError(ctx, 'Can only use the "link" syntax inside a var def', { start, end });
   }
-  if ([...ctx.links.values()].some(iterUuid => iterUuid === uuid)) {
-    ctx.reportError('This UUID has been defined on multiple entities.', { start, end });
+  if (ctx.links.has(uuid)) {
+    tools.reportError(ctx, 'This UUID has been defined on multiple entities.', { start, end });
   }
 
-  ctx.links.set(varDef.id, uuid);
+  ctx.links.set(uuid, varDef.id);
 }
 
 interface ExpressionNode {
@@ -169,34 +144,53 @@ interface ExpressionNode {
   readonly range: Range
 }
 
-function parseExpression(ctx: ParseContext, opts: { inStatementPos?: boolean } = {}): ExpressionNode {
+function parseExpression_(
+  ctx: ParseContext,
+  opts: { inStatementPos: boolean },
+): Omit<ExpressionNode, 'returnedVarId'> & { returnedVarId: number | undefined } {
   const { inStatementPos = false } = opts;
 
   if (nextTokenIsValidIdentifier(ctx)) {
     const identifierSeries = parseIdentifierSeries(ctx);
     if (ctx.tokenizer.peek().value === '(') {
-      return parseFunctionCall(ctx, identifierSeries);
+      return parseFunctionCall(ctx, identifierSeries, { inStatementPos });
     }
     if (!inStatementPos) {
       const varDef = tools.lookupVarSeries(ctx, identifierSeries);
       return { relationships: [], returnedVarId: varDef.id, range: identifierSeries.range };
     }
-    ctx.reportError('Expected a statement here.', identifierSeries.range);
+    tools.reportError(ctx, 'Expected a statement here.', identifierSeries.range);
   }
 
-  ctx.reportError('Expected a statement here.', ctx.tokenizer.peek().range);
+  tools.reportError(ctx, 'Expected a statement here.', ctx.tokenizer.peek().range);
+}
+
+function parseExpression(ctx: ParseContext): ExpressionNode {
+  const result = parseExpression_(ctx, { inStatementPos: false });
+  assert(result.returnedVarId !== undefined);
+  return result as ExpressionNode;
+}
+
+function parseExpressionInStatementPos(ctx: ParseContext): Relationship[] {
+  const result = parseExpression_(ctx, { inStatementPos: true });
+  assert(result.returnedVarId === undefined);
+  return result.relationships;
 }
 
 /** Parses the `(a=1, b=2)->c` of `myFn(a=1, b=2)->c`. */
-function parseFunctionCall(ctx: ParseContext, fnNameSeries: IdentifierSeries): ExpressionNode {
+function parseFunctionCall(
+  ctx: ParseContext,
+  fnNameSeries: IdentifierSeries,
+  opts: { inStatementPos: boolean },
+): Omit<ExpressionNode, 'returnedVarId'> & { returnedVarId: number | undefined } {
   const fnDef = tools.lookupVarSeries(ctx, fnNameSeries);
 
   const start = ctx.tokenizer.peek().range.start;
 
-  ctx.assertToken(ctx, ['(']).next();
+  tools.assertToken(ctx, ['(']).next();
 
   if (ctx.tokenizer.peek().value === ')') {
-    ctx.reportError('Functions must have at least one argument', { start, end: ctx.tokenizer.peek().range.end });
+    tools.reportError(ctx, 'Functions must have at least one argument', { start, end: ctx.tokenizer.peek().range.end });
   }
 
   const childRelationships: Relationship[] = [];
@@ -207,15 +201,16 @@ function parseFunctionCall(ctx: ParseContext, fnNameSeries: IdentifierSeries): E
     labelToDef: new Map(fnDef.varsInModule),
   };
 
+  let endParenToken: Token;
   while (true) {
     const keyNode = parseIdentifier(ctx);
     const keyDef = tools.replaceScope(ctx, keyScope, () => {
       return tools.lookupVar(ctx, keyNode);
     });
-    ctx.assertToken(ctx, ['=']).next();
+    tools.assertToken(ctx, ['=']).next();
     const valueNode = parseExpression(ctx);
     if (relationship.has(keyDef.id)) {
-      ctx.reportError('This same key got used in this relationship multiple times.', keyNode.range);
+      tools.reportError(ctx, 'This same key got used in this relationship multiple times.', keyNode.range);
     }
     relationship.set(keyDef.id, valueNode.returnedVarId);
     childRelationships.push(...valueNode.relationships);
@@ -225,33 +220,55 @@ function parseFunctionCall(ctx: ParseContext, fnNameSeries: IdentifierSeries): E
       ctx.tokenizer.next();
     }
     if (ctx.tokenizer.peek().value === ')') {
-      ctx.tokenizer.next();
+      endParenToken = ctx.tokenizer.next();
       break;
     }
     if (!commaFound) {
       const range: Range = { start: keyNode.range.start, end: valueNode.range.end };
-      ctx.reportError('This argument should have a comma after it.', range);
+      tools.reportError(ctx, 'This argument should have a comma after it.', range);
     }
   }
 
-  ctx.assertToken(ctx, ['-']).next();
-  ctx.assertToken(ctx, ['>']).next();
+  if (ctx.tokenizer.peek().value !== '-') {
+    const range = { start, end: endParenToken.range.end };
+    if (!opts.inStatementPos) {
+      tools.reportError(ctx, 'All function calls in expression positions must have an explicit `->xxx` to mark what value should be returned.', range);
+    }
+
+    return {
+      relationships: [...childRelationships, relationship],
+      returnedVarId: undefined,
+      range,
+    };
+  }
+
+  tools.assertToken(ctx, ['-']).next();
+  tools.assertToken(ctx, ['>']).next();
 
   const returnParamName = parseIdentifier(ctx);
   const returnParamDef = tools.replaceScope(ctx, keyScope, () => {
     return tools.lookupVar(ctx, returnParamName);
   });
-  const outputVarId = tools.genNextVarId(ctx);
 
+  const range = { start, end: returnParamName.range.end };
+  if (opts.inStatementPos) {
+    tools.reportError(ctx, 'A function call in a statement position cannot have an explicit `->xxx`, as there isn\'t anything to receive the final value.', range);
+  }
+
+  const outputVarId = tools.genNextVarId(ctx);
   if (relationship.has(returnParamDef.id)) {
-    ctx.reportError('This same key got used in this relationship multiple times.', returnParamName.range);
+    tools.reportError(ctx, 'This same key got used in this relationship multiple times.', returnParamName.range);
   }
   relationship.set(returnParamDef.id, outputVarId);
 
   return {
-    relationships: [...childRelationships, relationship],
+    relationships: [
+      ...childRelationships,
+      ctx.stdLibLinks.markAsVar(outputVarId),
+      relationship,
+    ],
     returnedVarId: outputVarId,
-    range: { start, end: returnParamName.range.end },
+    range,
   };
 }
 
@@ -274,7 +291,7 @@ function parseIdentifierSeries(ctx: ParseContext): IdentifierSeries {
 
 function parseIdentifier(ctx: ParseContext): IdentifierNode {
   if (!nextTokenIsValidIdentifier(ctx)) {
-    ctx.reportError('Expected to find an identifier', ctx.tokenizer.peek().range);
+    tools.reportError(ctx, 'Expected to find an identifier', ctx.tokenizer.peek().range);
   }
 
   const identifierToken = ctx.tokenizer.next();

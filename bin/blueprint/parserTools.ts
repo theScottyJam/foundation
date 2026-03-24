@@ -1,4 +1,5 @@
 import { throwIndexOutOfBounds } from '../util.ts';
+import { buildErrorWithUnderlinedText } from './errorFormatter.ts';
 import type { Range } from './shared.ts';
 import type { StdLibLinks } from './stdLibLinks.ts';
 import type { Tokenizer } from './Tokenizer.ts';
@@ -30,16 +31,36 @@ export interface IdentifierSeries {
 
 export interface ParseContext {
   readonly tokenizer: Tokenizer
-  readonly reportError: (message: string, range: Range) => never
-  readonly assertToken: (ctx: ParseContext, tokens: string[]) => { next: () => void }
   readonly varIdToLabel: Map<number, string>
   readonly stdLibLinks: StdLibLinks
   /** May be mutated during parsing */
-  readonly links: Map<number, string>
+  readonly links: Map<string, number>
   /** May be mutated during parsing */
   scopes: Scope[]
   /** May be mutated during parsing */
   nextId: number
+}
+
+export function reportError(ctx: ParseContext, message: string, range: Range): never {
+  throw new Error(buildErrorWithUnderlinedText(message, {
+    fileContents: ctx.tokenizer.text,
+    start: range.start.index,
+    end: range.end.index,
+  }));
+}
+
+export function assertToken(ctx: ParseContext, tokenValues: string[]) {
+  if (!tokenValues.includes(ctx.tokenizer.peek().value)) {
+    reportError(ctx, `Expected "${ctx.tokenizer.peek().value}" to be one of ${tokenValues.map(t => `"${t}"`).join(', ')}.`, {
+      start: ctx.tokenizer.peek().range.start,
+      end: ctx.tokenizer.peek().range.end,
+    });
+  }
+
+  // Returns a commonly-used follow-on action, to allow it to be easily chained if wanted.
+  return {
+    next: () => ctx.tokenizer.next(),
+  };
 }
 
 export function enterScope<T>(ctx: ParseContext, scope: Scope, callback: () => T): T {
@@ -64,7 +85,7 @@ export function lookupVarSeries(ctx: ParseContext, series: IdentifierSeries): Va
   for (const identifierNode of remaining) {
     const varDef_ = varDef.varsInModule.get(identifierNode.identifier);
     if (varDef_ === undefined) {
-      ctx.reportError(`"${identifierNode.identifier}" does not exist.`, identifierNode.range);
+      reportError(ctx, `"${identifierNode.identifier}" does not exist.`, identifierNode.range);
     }
     varDef = varDef_;
   }
@@ -76,7 +97,7 @@ export function lookupVar(ctx: ParseContext, identifierNode: IdentifierNode): Va
   const varDef = tryLookupVar(ctx, identifierNode.identifier);
 
   if (varDef === undefined) {
-    ctx.reportError(`The identifier ${identifierNode.identifier} was not in scope.`, identifierNode.range);
+    reportError(ctx, `The identifier ${identifierNode.identifier} was not in scope.`, identifierNode.range);
   } else {
     return varDef;
   }

@@ -1,17 +1,18 @@
-import { compileBlueprint } from './blueprint/index.ts';
+import fs from 'node:fs';
+import childProcess from 'node:child_process';
+import { bedrockToJs } from './jsCompiler/index.ts';
+import { blueprintToBedrock } from './blueprint/index.ts';
 
-compileBlueprint(
-  './example.blueprint',
-  './example.bedrock.json',
-);
+console.info('-- blueprint to bedrock --');
 
-// import fs from 'node:fs';
-// import { main } from './jsCompiler/index.ts';
+const bedrockData = blueprintToBedrock(fs.readFileSync('./example.blueprint', 'utf-8'));
+fs.writeFileSync('./example.bedrock.json', JSON.stringify(bedrockData, undefined, 2));
 
-// const bedrockData = JSON.parse(fs.readFileSync('./src.bedrock.json', 'utf-8'));
+console.info('-- bedrock to js --');
 
-// // Remove comments
-// bedrockData.relationships = bedrockData.relationships.filter((relationship: any) => typeof relationship !== 'string');
+const jsCode = bedrockToJs(bedrockData);
+fs.writeFileSync('build.js', jsCode);
 
-// const program = main(bedrockData);
-// fs.writeFileSync('build.js', program);
+console.info('-- execute --');
+
+childProcess.execSync('node ./build.js', { stdio: 'inherit' });
