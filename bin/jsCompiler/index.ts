@@ -58,7 +58,6 @@ class NumberLookup {
 
 class CompilerCache {
   readonly nav: BedrockNavigator;
-  readonly #typeSignatures: Set<NodeId>;
   readonly exitRelationshipSchema: RelationshipSchema<'value'>;
   readonly andRelationshipSchema: RelationshipSchema<'left' | 'right'>;
   readonly notRelationshipSchema: RelationshipSchema<'right'>;
@@ -68,15 +67,6 @@ class CompilerCache {
 
   constructor(nav: BedrockNavigator) {
     this.nav = nav;
-
-    const typeSignaturesParsedRelationships = new RelationshipSchema({
-      data: nav.data,
-      typeId: nav.fromUuid('c120e64e-ff23-4e63-9780-c426657a56a5'),
-      fieldNameToId: {
-        target: nav.fromUuid('bbb78612-a804-40f4-93ff-4bf9518f1d98'),
-      } as const,
-    }).listParsedRelationships();
-    this.#typeSignatures = new Set(typeSignaturesParsedRelationships.map(r => r.fields.target));
 
     this.exitRelationshipSchema = new RelationshipSchema({
       data: nav.data,
@@ -122,10 +112,6 @@ class CompilerCache {
     });
 
     this.numberLookup = new NumberLookup(nav);
-  }
-
-  isTypeSignature(nodeId: NodeId): boolean {
-    return this.#typeSignatures.has(nodeId);
   }
 }
 
@@ -273,6 +259,12 @@ function compileRelationshipInFn(cc: CompilerCache, outputVarId: NodeId): string
 }
 
 function compileRelationship(cc: CompilerCache, relationship: Relationship): { code: string, inFnDef: string | undefined } | undefined {
+  for (const [key, value] of Object.entries(relationship)) {
+    if (cc.nav.isOutput(key) && cc.nav.shouldIgnore(value)) {
+      return undefined;
+    }
+  }
+
   const relationshipType = cc.nav.getRelationshipType(relationship);
   if (relationshipType === cc.nav.typeRelationshipSchema.typeId) {
     const { target: targetId, type: typeId } = cc.nav.typeRelationshipSchema.fieldNameToId;
@@ -289,31 +281,38 @@ function compileRelationship(cc: CompilerCache, relationship: Relationship): { c
     // This is handled elsewhere.
     return undefined;
   } else if (relationshipType === cc.andRelationshipSchema.typeId && !cc.nav.isFullyResolved(cc.andRelationshipSchema.parse(relationship))) {
+    // A fully-resolve and() will be interpreted as a function definition.
+
     // TODO: The logic for the above `if` makes it so you can
     // only use literal values when defining the relationships for `and` - not sure if this is good.
     const parsedRelationship = cc.andRelationshipSchema.parse(relationship);
 
-    assert(cc.isTypeSignature(parsedRelationship.fields.left));
-    const signatureRelationship = cc.nav.relationshipFromOutputVarId(parsedRelationship.fields.left);
+    const signatureIsRelationship = cc.isRelationshipSchema.parse(cc.nav.relationshipFromOutputVarId(parsedRelationship.fields.left));
+    const signatureRelationship = cc.nav.relationshipFromOutputVarId(signatureIsRelationship.fields.left);
+
     const inFnDef = buildFnDef(cc, signatureRelationship);
     const { check, declares } = buildConditionForFn(cc, signatureRelationship);
 
-    let output: NodeId | undefined;
+    let outputKey: NodeId | undefined;
     for (const key of Object.keys(signatureRelationship)) {
       if (cc.nav.isOutput(key)) {
-        assert(output === undefined, 'Only one output can currently be defined in a procedural function definition.');
-        output = key;
+        assert(outputKey === undefined, 'Only one output can currently be defined in a procedural function definition.');
+        outputKey = key;
       }
     }
-    assert(output !== undefined, 'An output is required.');
-    const outputVar = signatureRelationship[output]!;
-    assert(cc.nav.isVar(outputVar), 'The output must be a var.');
+    assert(outputKey !== undefined, 'An output is required.');
+    assert(cc.nav.isVar(signatureRelationship[outputKey]!), 'The output must be a var.');
+    const outputVar = signatureIsRelationship.fields.right;
+    assert(
+      cc.nav.isVar(outputVar),
+      'The right-hand side of the is() relationship that is part of a type signature must be a variable.',
+    );
 
     const lines = compileRelationshipInFn(cc, parsedRelationship.fields.right);
     const code = [
       `if (${check}) {`,
       ...[...declares, ...lines].map(line => '    ' + line),
-      `    return { ${nodeIdToLiteral(output)}: ${nodeIdToLiteral(outputVar)} };`,
+      `    return { ${nodeIdToLiteral(outputKey)}: ${nodeIdToLiteral(outputVar)} };`,
       '  }',
     ].join('\n');
     return { code, inFnDef };
@@ -349,7 +348,7 @@ function compileRelationship(cc: CompilerCache, relationship: Relationship): { c
     } else if (outputType === 'decl') {
       const inFnDef = buildFnDef(cc, relationship);
       const { check, declares } = buildConditionForFn(cc, relationship);
-      assert(declares.length === 0, 'Declarations in a single mapping is not supported'); // Not sure if this would even be reachable.
+      assert(declares.length === 0, 'Relationships with inputs as variables and outputs as non-variables are not supported. ' + JSON.stringify(relationship));
 
       const outputFields: string[] = [];
       for (const output of outputs) {

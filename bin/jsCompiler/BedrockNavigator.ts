@@ -88,6 +88,7 @@ export class BedrockNavigator {
   readonly #entityToTypeLookup: Record<NodeId, NodeId>;
   readonly #typeToEntityLookup: Record<NodeId, NodeId[]>;
   readonly #vars: Set<NodeId>;
+  readonly #ignore: Set<NodeId>;
   readonly #inputs: Set<NodeId>;
   readonly #outputs: Set<NodeId>;
   readonly #outputVarIdToRelationship: Map<NodeId, Relationship>;
@@ -109,12 +110,21 @@ export class BedrockNavigator {
     const assertResolved = <T extends string>(parsedRelationships: ParsedRelationship<T>[]): ParsedRelationship<T>[] => {
       for (const parsedRelationship of parsedRelationships) {
         for (const [key, value] of Object.entries<string>(parsedRelationship.fields)) {
-          assert(!this.#vars.has(value), 'This cannot be set to a variable.');
+          assert(!this.#vars.has(value), `${value} cannot be set to a variable in ${JSON.stringify(parsedRelationship.raw)}`);
         }
       }
 
       return parsedRelationships;
     };
+
+    const ignoreParsedRelationships = new RelationshipSchema({
+      data,
+      typeId: fromUuid(data, '6c3723e0-ca7e-4ef7-905a-b5680c5dc8a7'),
+      fieldNameToId: {
+        target: fromUuid(data, 'fe7e5b65-e801-4ce7-82d9-40e35b01d879'),
+      } as const,
+    }).listParsedRelationships();
+    this.#ignore = new Set(ignoreParsedRelationships.map(r => r.fields.target));
 
     const inputParsedRelationships = assertResolved(new RelationshipSchema({
       data,
@@ -171,6 +181,10 @@ export class BedrockNavigator {
 
   isVar(nodeId: NodeId): boolean {
     return this.#vars.has(nodeId);
+  }
+
+  shouldIgnore(nodeId: NodeId): boolean {
+    return this.#ignore.has(nodeId);
   }
 
   isInput(nodeId: NodeId): boolean {

@@ -264,7 +264,7 @@ function parseFunctionCall(
   return {
     relationships: [
       ...childRelationships,
-      ctx.stdLibLinks.markAsVar(outputVarId),
+      ctx.stdLibLinks.markAsVar(ctx, outputVarId, range),
       relationship,
     ],
     returnedVarId: outputVarId,
