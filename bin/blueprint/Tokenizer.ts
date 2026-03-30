@@ -1,10 +1,15 @@
-import type { Position, Token } from './shared.ts';
+import type { Position, Range } from '../types.ts';
 import { assert, throwIndexOutOfBounds } from '../util.ts';
 
 // EOF is represented by the empty string
 export const EOF = '';
 
 export const RESERVED_CHARS = ['(', ')', '{', '}', '=', ',', '.', ':', '-', '>'];
+
+export interface Token {
+  readonly value: string
+  readonly range: Range
+}
 
 export class Tokenizer {
   text: string;

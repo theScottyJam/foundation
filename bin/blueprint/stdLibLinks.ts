@@ -1,18 +1,8 @@
 import type { ParseContext, Relationship } from './parserTools.ts';
 import * as tools from './parserTools.ts';
-import type { Range } from './shared.ts';
+import type { Range } from '../types.ts';
 
-export function registerStdLibLinks(ctx: Omit<ParseContext, 'stdLibLinks'>) {
-  const register = (label: string, uuid: string) => {
-    const varId = tools.genNextVarId(ctx);
-    ctx.links.set(uuid, varId);
-    ctx.varIdToLabel.set(varId, label);
-    return varId;
-  };
-
-  /** All relationships should have this as a key to identify what the relationship is */
-  const relationshipTypeId = register('relationshipType', '1c6c63c0-c0ae-4a64-af72-ed32de0de764');
-
+export function getStdLibLinks() {
   const varUuids = {
     typeId: '2b04c7d1-41c2-4e3c-b3c9-2741b304efbf',
     fields: {
@@ -21,7 +11,6 @@ export function registerStdLibLinks(ctx: Omit<ParseContext, 'stdLibLinks'>) {
   };
 
   return {
-    relationshipTypeId,
     varUuids,
     markAsVar: (ctx: ParseContext, targetNodeId: number, range: Range): Relationship => {
       const typeId = ctx.links.get(varUuids.typeId);
@@ -29,12 +18,16 @@ export function registerStdLibLinks(ctx: Omit<ParseContext, 'stdLibLinks'>) {
       if (typeId === undefined || target === undefined) {
         tools.reportError(ctx, 'Cannot use syntax to mark something as a variable until the mark-as-var UUIDs are registered.', range);
       }
-      return new Map([
-        [relationshipTypeId, typeId],
-        [target, targetNodeId],
-      ]);
+
+      return {
+        type: typeId,
+        mapping: new Map([
+          [target, targetNodeId],
+        ]),
+        range,
+      };
     },
   };
 }
 
-export type StdLibLinks = ReturnType<typeof registerStdLibLinks>;
+export type StdLibLinks = ReturnType<typeof getStdLibLinks>;

@@ -1,406 +1,303 @@
 import assert from 'node:assert/strict';
-import {
-  BedrockNavigator,
-  RelationshipSchema,
-  type NodeId,
-  type BedrockData,
-  type Relationship,
-} from './BedrockNavigator.ts';
-import { UnreachableCaseError } from '../util.ts';
+import { BedrockNavigator, RelationshipSchema, type NodeId } from './BedrockNavigator.ts';
+import { throwIndexOutOfBounds } from '../util.ts';
+import type { BedrockData, RelationshipData } from '../types.ts';
 
-class NumberEntity {
-  static #typeUuid = '0f7b46ea-451d-40f2-9a34-3a4530667814';
-
-  readonly previous: NodeId | undefined;
-  readonly id: string;
-
-  constructor(nav: BedrockNavigator, entityId: NodeId) {
-    assert(nav.getTypeOfEntity(entityId) === nav.fromUuid(NumberEntity.#typeUuid));
-    this.id = entityId;
-
-    this.previous = nav.tryGetKnownProperty(entityId, 'previous', new RelationshipSchema({
-      data: nav.data,
-      typeId: nav.fromUuid('10037d13-bbd0-4f60-8e47-7b1635e620f4'),
-      fieldNameToId: {
-        target: nav.fromUuid('7edaef67-1e08-4472-95a9-89a212e6504c'),
-        previous: nav.fromUuid('1a3fbabd-02e6-427b-9f46-2c20b16d71e4'),
-      } as const,
-    }));
-  }
-
-  static listEntities(nav: BedrockNavigator) {
-    return nav.findEntitiesByType(nav.fromUuid(NumberEntity.#typeUuid))
-      .map(entityId => new NumberEntity(nav, entityId));
-  }
-}
-
-class NumberLookup {
-  readonly entityIdToValue: Record<NodeId, number>;
-  constructor(nav: BedrockNavigator) {
-    const entityIdToValue: Record<NodeId, number> = Object.create(null);
-    for (const entity of NumberEntity.listEntities(nav)) {
-      let count = -1;
-      let currentEntity: NumberEntity | undefined = entity;
-      // TODO: Extremely inefficient - lower numbers are being re-built instead of being re-used.
-      while (currentEntity !== undefined) {
-        count++;
-        currentEntity = currentEntity.previous === undefined
-          ? undefined
-          : new NumberEntity(nav, currentEntity.previous);
-      }
-
-      entityIdToValue[entity.id] = count;
-    }
-
-    this.entityIdToValue = entityIdToValue;
-  }
-}
+type CompiledLine = {
+  readonly type: 'statement'
+  readonly line: string
+  /** What variables does this statement need provided? (Dependencies on functions are excluded) */
+  readonly varDependencies: NodeId[]
+  /** If this statement assigns to a variable (a node), what node does it assign to? */
+  readonly supplies: NodeId | undefined
+} | {
+  readonly type: 'fnDef'
+  readonly content: string
+};
 
 class CompilerCache {
   readonly nav: BedrockNavigator;
+  readonly #processedNodeIds = new Map<NodeId, { inFn: NodeId | undefined }>();
+  readonly #inFn: NodeId[] = [];
+  /** Maps node-ids that have been processed to the functions they are local to when processed. */
   readonly exitRelationshipSchema: RelationshipSchema<'value'>;
-  readonly andRelationshipSchema: RelationshipSchema<'left' | 'right'>;
-  readonly notRelationshipSchema: RelationshipSchema<'right'>;
-  readonly ifThenRelationshipSchema: RelationshipSchema<'left' | 'right'>;
-  readonly isRelationshipSchema: RelationshipSchema<'left' | 'right'>;
-  readonly numberLookup: NumberLookup;
+  // readonly andRelationshipSchema: RelationshipSchema<'left' | 'right'>;
+  // readonly notRelationshipSchema: RelationshipSchema<'right'>;
+  // readonly ifThenRelationshipSchema: RelationshipSchema<'left' | 'right'>;
+  // readonly isRelationshipSchema: RelationshipSchema<'left' | 'right'>;
 
   constructor(nav: BedrockNavigator) {
     this.nav = nav;
 
     this.exitRelationshipSchema = new RelationshipSchema({
-      data: nav.data,
       typeId: nav.fromUuid('86b33c24-e4c1-4790-a4d9-1c8af3030b34'),
       fieldNameToId: {
         value: nav.fromUuid('381dde34-25e1-4c1b-a3f3-762d9ada9f9c'),
       } as const,
     });
 
-    this.andRelationshipSchema = new RelationshipSchema({
-      data: nav.data,
-      typeId: nav.fromUuid('876a450c-778d-44a3-aae4-e4abd21b6cf0'),
-      fieldNameToId: {
-        left: nav.fromUuid('96a0773b-d697-4397-a83e-c5dccb4287d9'),
-        right: nav.fromUuid('46560cd5-7339-4755-86bf-2ec963b6dfec'),
-      } as const,
-    });
+    // this.andRelationshipSchema = new RelationshipSchema({
+    //   typeId: nav.fromUuid('876a450c-778d-44a3-aae4-e4abd21b6cf0'),
+    //   fieldNameToId: {
+    //     left: nav.fromUuid('96a0773b-d697-4397-a83e-c5dccb4287d9'),
+    //     right: nav.fromUuid('46560cd5-7339-4755-86bf-2ec963b6dfec'),
+    //   } as const,
+    // });
 
-    this.notRelationshipSchema = new RelationshipSchema({
-      data: nav.data,
-      typeId: nav.fromUuid('5833f84b-7ec6-4c14-b9b4-6afa554987ce'),
-      fieldNameToId: {
-        right: nav.fromUuid('52acc525-0ddf-4b4f-acac-4c92c45fd2a5'),
-      } as const,
-    });
+    // this.notRelationshipSchema = new RelationshipSchema({
+    //   typeId: nav.fromUuid('5833f84b-7ec6-4c14-b9b4-6afa554987ce'),
+    //   fieldNameToId: {
+    //     right: nav.fromUuid('52acc525-0ddf-4b4f-acac-4c92c45fd2a5'),
+    //   } as const,
+    // });
 
-    this.ifThenRelationshipSchema = new RelationshipSchema({
-      data: nav.data,
-      typeId: nav.fromUuid('0c715b0f-0beb-41ea-809a-cbb0a4e4ab4d'),
-      fieldNameToId: {
-        left: nav.fromUuid('2fb3e027-21cd-4dc7-95ec-e73a3956f1f9'),
-        right: nav.fromUuid('73528fa9-2ce9-432c-962a-365c337406c8'),
-      } as const,
-    });
+    // this.ifThenRelationshipSchema = new RelationshipSchema({
+    //   typeId: nav.fromUuid('0c715b0f-0beb-41ea-809a-cbb0a4e4ab4d'),
+    //   fieldNameToId: {
+    //     left: nav.fromUuid('2fb3e027-21cd-4dc7-95ec-e73a3956f1f9'),
+    //     right: nav.fromUuid('73528fa9-2ce9-432c-962a-365c337406c8'),
+    //   } as const,
+    // });
 
-    this.isRelationshipSchema = new RelationshipSchema({
-      data: nav.data,
-      typeId: nav.fromUuid('4b33c2ce-1303-40d6-8053-237ae570c5b4'),
-      fieldNameToId: {
-        left: nav.fromUuid('facdc04f-fbc0-489d-88a5-5f59f8eb624e'),
-        right: nav.fromUuid('c1fbd400-9fe0-47f6-80db-da450e246011'),
-      } as const,
-    });
-
-    this.numberLookup = new NumberLookup(nav);
+    // this.isRelationshipSchema = new RelationshipSchema({
+    //   typeId: nav.fromUuid('4b33c2ce-1303-40d6-8053-237ae570c5b4'),
+    //   fieldNameToId: {
+    //     left: nav.fromUuid('facdc04f-fbc0-489d-88a5-5f59f8eb624e'),
+    //     right: nav.fromUuid('c1fbd400-9fe0-47f6-80db-da450e246011'),
+    //   } as const,
+    // });
   }
+
+  /**
+   * Node IDs should be marked with this function when you're about to start processing them.
+   * Returns true if they have already been processed, so you don't need to double-compile it.
+   * Throws if they have already been processed, but local to a different function.
+   *
+   * The thing being marked as processed is the line that produces the value tied to that node ID,
+   * which may be a function definition (where that node ID is the function name), a function call
+   * (where the node ID is what gets assigned from the result), etc.
+   *
+   * Use {@link inGlobalScope} for functions, which always get defined in the global scope.
+   */
+  markAsProcessed(nodeId: NodeId, opts: { inGlobalScope?: boolean } = {}): boolean {
+    const { inGlobalScope = false } = opts;
+
+    const existing = this.#processedNodeIds.get(nodeId);
+    const scopeToDefineIn = inGlobalScope ? undefined : this.#inFn.at(-1); // May be undefined
+
+    if (existing === undefined) {
+      this.#processedNodeIds.set(nodeId, { inFn: scopeToDefineIn });
+      return false;
+    }
+
+    if (existing.inFn === scopeToDefineIn) {
+      return true;
+    }
+
+    const details = `"${existing.inFn ?? 'global'}" and "${scopeToDefineIn ?? 'global'}"`;
+    throw new Error(`The same nodeID, ${nodeId}, got compiled into two incompatible scopes. (${details})`);
+  }
+
+  inFn<T>(fnNodeId: NodeId, callback: () => T): T {
+    assert(this.#inFn !== undefined, `Can not enter a function when you are already in one. Function node trying to enter: ${fnNodeId}.`);
+    this.#inFn.push(fnNodeId);
+    try {
+      return callback();
+    } finally {
+      this.#inFn.pop();
+    }
+  }
+}
+
+/**
+ * If you're inside a function, provide the `params` list so we know what param nodeIds are available,
+ * which is needed as part of determining order via variable dependency.
+ */
+function reorderCompiledLines(compiledLines: CompiledLine[], opts: { params?: NodeId[] } = {}): CompiledLine[] {
+  const fnDefs = compiledLines.filter(cl => cl.type === 'fnDef');
+  const unsortedStatements = compiledLines.filter(cl => cl.type === 'statement');
+
+  const seen = new Set<NodeId>(opts.params ?? []);
+  const queue = [...unsortedStatements];
+  const statements: CompiledLine[] = [];
+  let loopCounter = queue.length;
+  while (queue.length > 0) {
+    const statement = queue.pop() ?? throwIndexOutOfBounds();
+    if (statement.varDependencies.every(dep => seen.has(dep))) {
+      if (statement.supplies !== undefined) {
+        seen.add(statement.supplies);
+      }
+      statements.push(statement);
+      loopCounter = queue.length;
+    } else {
+      queue.unshift(statement);
+      loopCounter--;
+      assert(loopCounter >= 0, 'Infinite dependency loop detected');
+    }
+  }
+
+  return [...fnDefs, ...statements];
 }
 
 /** Converts a node-id with arbitrary characters into a literal that can be used in JS. */
 function nodeIdToLiteral(nodeId: NodeId) {
-  return '$_' + encodeURIComponent(nodeId)
+  // All variables start with "_" or "$" to avoid conflicting with the language's built-in variables.
+
+  // Try to keep things somewhat human-readable if able.
+  const parts = nodeId.split(':');
+  if (parts.length === 2 && !Number.isNaN(Number(parts[0])) && parts[1]!.match(/^[a-zA-Z0-9_$]+$/) !== null) {
+    return '$' + parts[0] + '_' + parts[1];
+  }
+
+  // Fall back to a quick-and-dirty generic encoding algorithm.
+  return '$$' + encodeURIComponent(nodeId)
     .replaceAll('%', '$');
 }
 
-function buildFnDef(cc: CompilerCache, relationship: Relationship) {
-  const inputs: string[] = [];
-  for (const key of Object.keys(relationship)) {
-    if (cc.nav.isInput(key)) {
-      inputs.push(key);
-    }
-  }
+/** {@link sourceRelationship} is where this nodeId was found, so if we fail to look it up, we know what line to highlight. */
+function compileFnDefinition(cc: CompilerCache, fnNodeId: NodeId, sourceRelationship: RelationshipData): CompiledLine[] {
+  if (cc.markAsProcessed(fnNodeId, { inGlobalScope: true })) return [];
 
-  // Always using the same order is important, because the resulting string that gets built is compared with other strings.
-  inputs.sort((a, b) => a.localeCompare(b));
+  const fnSignatures = cc.nav.lookupFnSignatureIds(fnNodeId)
+    .map(relationshipId => cc.nav.lookupRelationship(relationshipId));
+  assert(fnSignatures.length === 1, `There should be exactly one function signature per function. ${fnNodeId} has ${fnSignatures.length}.`);
+  const fnSignature = fnSignatures[0] ?? throwIndexOutOfBounds();
 
-  const relationshipType = cc.nav.getRelationshipType(relationship);
-  const params = inputs.map(input => nodeIdToLiteral(input)).join(', ');
-  return `function ${nodeIdToLiteral(relationshipType)}({ ${params} })`;
-}
+  const { inputNodeIds, outputNodeId } = cc.nav.getInputsAndOutputs(fnSignature);
 
-function buildConditionForFn(cc: CompilerCache, relationship: Relationship): { check: string, declares: string[] } {
-  const inputs: string[] = [];
-  for (const key of Object.keys(relationship)) {
-    if (cc.nav.isInput(key)) {
-      inputs.push(key);
-    }
-  }
-
-  const conditions: string[] = [];
   const declares: string[] = [];
-  for (const input of inputs) {
-    const inputVar = relationship[input]!;
+  const paramVars: string[] = [];
+  for (const input of inputNodeIds) {
+    const inputVar = fnSignature.mapping[input] ?? throwIndexOutOfBounds();
     if (cc.nav.isVar(inputVar)) {
       declares.push(`var ${nodeIdToLiteral(inputVar)} = ${nodeIdToLiteral(input)};`);
+      paramVars.push(inputVar);
     } else {
-      conditions.push(`${nodeIdToLiteral(input)} === ${nodeIdToLiteral(inputVar)}`);
+      cc.nav.reportError(`All function signature inputs must be a variable. ${input} was not.`, fnSignature);
     }
   }
 
-  const check = conditions.length === 0 ? 'true' : conditions.join(' && ');
-  return { check, declares };
+  const outputVar = fnSignature.mapping[outputNodeId] ?? throwIndexOutOfBounds();
+  if (!cc.nav.isVar(outputVar)) {
+    cc.nav.reportError("The function signature's output must be a variable.", fnSignature);
+  }
+
+  const statements = cc.inFn(fnNodeId, () => {
+    for (const input of inputNodeIds) {
+      const inputVar = fnSignature.mapping[input] ?? throwIndexOutOfBounds();
+      assert(!cc.markAsProcessed(inputVar));
+    }
+    return compileProducerOfNodeId(cc, outputVar, fnSignature);
+  });
+  const dependentCode = reorderCompiledLines(statements, { params: paramVars });
+  const bodyLines = dependentCode.filter(c => c.type === 'statement').map(c => c.line);
+  const dependentFnDefs = dependentCode.filter(c => c.type === 'fnDef');
+  const body = [
+    ...[...declares, ...bodyLines].map(line => '  ' + line),
+    `  return { ${nodeIdToLiteral(outputNodeId)}: ${nodeIdToLiteral(outputVar)} };`,
+  ].join('\n');
+
+  const params = inputNodeIds.map(input => nodeIdToLiteral(input)).join(', ');
+  return [
+    ...dependentFnDefs,
+    {
+      type: 'fnDef',
+      content: `function ${nodeIdToLiteral(fnNodeId)}({ ${params} }) {\n${body}\n}`,
+    },
+  ];
 }
 
-function compileFnCall(cc: CompilerCache, relationship: Relationship) {
-  const relationshipType = cc.nav.getRelationshipType(relationship);
+function compileFunctionCall(cc: CompilerCache, nodeId: NodeId, sourceRelationship: RelationshipData): CompiledLine[] {
+  if (cc.markAsProcessed(nodeId)) return [];
 
-  const inputs: string[] = [];
-  const outputs: string[] = [];
-  for (const key of Object.keys(relationship)) {
-    if (cc.nav.isInput(key)) {
-      inputs.push(key);
-    }
-    if (cc.nav.isOutput(key)) {
-      outputs.push(key);
-    }
+  const relationships = cc.nav.nonSignatureRelationshipsFromOutputVarId(nodeId, sourceRelationship);
+  assert(relationships.length === 1, `Only one producer per variable is currently supported, found ${relationships.length} for ${nodeId}`);
+  const relationship = relationships[0] ?? throwIndexOutOfBounds();
+  const { inputNodeIds, outputNodeId } = cc.nav.getInputsAndOutputs(relationship);
+
+  const result: CompiledLine[] = [];
+  result.push(...compileFnDefinition(cc, relationship.type, relationship));
+  for (const nodeId of [...inputNodeIds, outputNodeId]) {
+    const value = relationship.mapping[nodeId] ?? throwIndexOutOfBounds();
+    result.push(...compileProducerOfNodeId(cc, value, relationship));
   }
 
-  const args: string[] = [];
-  for (const input of inputs) {
-    const inputVar = relationship[input]!;
-    args.push(`${nodeIdToLiteral(input)}: ${nodeIdToLiteral(inputVar)}`);
-  }
+  result.push({
+    type: 'statement',
+    line: (
+      'var { ' +
+      nodeIdToLiteral(outputNodeId) +
+      ': ' +
+      nodeIdToLiteral(relationship.mapping[outputNodeId] ?? throwIndexOutOfBounds()) +
+      ' } = ' +
+      nodeIdToLiteral(relationship.type) +
+      '({ ' +
+      inputNodeIds.map(nodeId => {
+        const value = relationship.mapping[nodeId] ?? throwIndexOutOfBounds();
+        return nodeIdToLiteral(nodeId) + ': ' + nodeIdToLiteral(value);
+      }).join(', ') +
+      ' });'
+    ),
+    varDependencies: inputNodeIds.map(nodeId => relationship.mapping[nodeId] ?? throwIndexOutOfBounds()),
+    supplies: nodeId,
+  });
 
-  const outputFields: string[] = [];
-  for (const output of outputs) {
-    const outputVar = relationship[output]!;
-    outputFields.push(`${nodeIdToLiteral(output)}: ${nodeIdToLiteral(outputVar)}`);
-  }
-
-  const code = `var { ${outputFields.join(', ')} } = ${nodeIdToLiteral(relationshipType)}({ ${args.join(', ')} })`;
-
-  return code;
+  return result;
 }
 
-// TODO: If you have one output that leads into two inputs, the output-generating code will be duplicated for each input that needs it.
-function compileRelationshipAsExpression(cc: CompilerCache, outputVarId: NodeId): string {
-  if (!cc.nav.isVar(outputVarId)) {
-    return nodeIdToLiteral(outputVarId);
-  }
+function compileLiteralAssignment(cc: CompilerCache, nodeId: NodeId): CompiledLine[] {
+  if (cc.markAsProcessed(nodeId)) return [];
 
-  const relationship = cc.nav.relationshipFromOutputVarId(outputVarId);
-  const relationshipType = cc.nav.getRelationshipType(relationship);
+  const type = cc.nav.tryGetTypeOfEntity(nodeId);
+  const object = type === undefined
+    ? '{ $repr: "<unknown type>" }'
+    : `{ $repr: "<type:${type.replaceAll('"', '').replaceAll('\\', '')}>" }`;
 
-  if (relationshipType === cc.andRelationshipSchema.typeId) {
-    const parsedRelationship = cc.andRelationshipSchema.parse(relationship);
+  return [{
+    type: 'statement',
+    line: `const ${nodeIdToLiteral(nodeId)} = ${object};`,
+    varDependencies: [],
+    supplies: nodeId,
+  }];
+}
 
-    return (
-      '(' +
-      compileRelationshipAsExpression(cc, parsedRelationship.fields.left) +
-      ' && ' +
-      compileRelationshipAsExpression(cc, parsedRelationship.fields.right) +
-      ')'
-    );
-  } else if (relationshipType === cc.notRelationshipSchema.typeId) {
-    const parsedRelationship = cc.notRelationshipSchema.parse(relationship);
-
-    return '!' + compileRelationshipAsExpression(cc, parsedRelationship.fields.right);
-  } else if (relationshipType === cc.isRelationshipSchema.typeId) {
-    const parsedRelationship = cc.isRelationshipSchema.parse(relationship);
-
-    return (
-      '(' +
-      nodeIdToLiteral(parsedRelationship.fields.left) +
-      ' === ' +
-      nodeIdToLiteral(parsedRelationship.fields.right) +
-      ')'
-    );
+/**
+ * {@link sourceRelationship} is where this nodeId was found, so if we fail to look it up, we know what line to highlight.
+ * It is _not_ the relationship being compiled by this function, it's a relationship that uses JS variables, and we need compile
+ * whatever generates those variables.
+ */
+function compileProducerOfNodeId(cc: CompilerCache, nodeId: NodeId, sourceRelationship: RelationshipData): CompiledLine[] {
+  if (!cc.nav.isVar(nodeId)) {
+    return compileLiteralAssignment(cc, nodeId);
   } else {
-    throw new Error(`Unsupported relationship type in expression "${relationshipType}"`);
-  }
-}
-
-function compileRelationshipInFn(cc: CompilerCache, outputVarId: NodeId): string[] {
-  const relationship = cc.nav.relationshipFromOutputVarId(outputVarId);
-  const relationshipType = cc.nav.getRelationshipType(relationship);
-  if (relationshipType === cc.andRelationshipSchema.typeId) {
-    const parsedRelationship = cc.andRelationshipSchema.parse(relationship);
-
-    return [
-      ...compileRelationshipInFn(cc, parsedRelationship.fields.left),
-      ...compileRelationshipInFn(cc, parsedRelationship.fields.right),
-    ];
-  } else if (relationshipType === cc.ifThenRelationshipSchema.typeId) {
-    const parsedRelationship = cc.ifThenRelationshipSchema.parse(relationship);
-
-    return [
-      `if (${compileRelationshipAsExpression(cc, parsedRelationship.fields.left)}) {`,
-      ...compileRelationshipInFn(cc, parsedRelationship.fields.right)
-        .map(line => '  ' + line),
-      '}',
-    ];
-  } else if (relationshipType === cc.isRelationshipSchema.typeId) {
-    const parsedRelationship = cc.isRelationshipSchema.parse(relationship);
-    assert(cc.nav.isVar(parsedRelationship.fields.left), `The left operand of 'is' must be a var. ${JSON.stringify(relationship)}`);
-
-    return [`var ${nodeIdToLiteral(parsedRelationship.fields.left)} = ${nodeIdToLiteral(parsedRelationship.fields.right)};`];
-  } else {
-    return [compileFnCall(cc, relationship)];
-  }
-}
-
-function compileRelationship(cc: CompilerCache, relationship: Relationship): { code: string, inFnDef: string | undefined } | undefined {
-  for (const [key, value] of Object.entries(relationship)) {
-    if (cc.nav.isOutput(key) && cc.nav.shouldIgnore(value)) {
-      return undefined;
-    }
-  }
-
-  const relationshipType = cc.nav.getRelationshipType(relationship);
-  if (relationshipType === cc.nav.typeRelationshipSchema.typeId) {
-    const { target: targetId, type: typeId } = cc.nav.typeRelationshipSchema.fieldNameToId;
-    const target = relationship[targetId]!;
-    const type = relationship[typeId]!;
-
-    assert(!cc.nav.isVar(target));
-    const maybeNumber = cc.numberLookup.entityIdToValue[target];
-    const object = maybeNumber === undefined
-      ? `{ $repr: "<type:${type.replaceAll('"', '').replaceAll('\\', '')}>" }`
-      : `{ $repr: "${maybeNumber}", $type: "numb" }`;
-    return { code: `const ${nodeIdToLiteral(target)} = ${object};`, inFnDef: undefined };
-  } else if (relationshipType === cc.exitRelationshipSchema.typeId) {
-    // This is handled elsewhere.
-    return undefined;
-  } else if (relationshipType === cc.andRelationshipSchema.typeId && !cc.nav.isFullyResolved(cc.andRelationshipSchema.parse(relationship))) {
-    // A fully-resolve and() will be interpreted as a function definition.
-
-    // TODO: The logic for the above `if` makes it so you can
-    // only use literal values when defining the relationships for `and` - not sure if this is good.
-    const parsedRelationship = cc.andRelationshipSchema.parse(relationship);
-
-    const signatureIsRelationship = cc.isRelationshipSchema.parse(cc.nav.relationshipFromOutputVarId(parsedRelationship.fields.left));
-    const signatureRelationship = cc.nav.relationshipFromOutputVarId(signatureIsRelationship.fields.left);
-
-    const inFnDef = buildFnDef(cc, signatureRelationship);
-    const { check, declares } = buildConditionForFn(cc, signatureRelationship);
-
-    let outputKey: NodeId | undefined;
-    for (const key of Object.keys(signatureRelationship)) {
-      if (cc.nav.isOutput(key)) {
-        assert(outputKey === undefined, 'Only one output can currently be defined in a procedural function definition.');
-        outputKey = key;
-      }
-    }
-    assert(outputKey !== undefined, 'An output is required.');
-    assert(cc.nav.isVar(signatureRelationship[outputKey]!), 'The output must be a var.');
-    const outputVar = signatureIsRelationship.fields.right;
-    assert(
-      cc.nav.isVar(outputVar),
-      'The right-hand side of the is() relationship that is part of a type signature must be a variable.',
-    );
-
-    const lines = compileRelationshipInFn(cc, parsedRelationship.fields.right);
-    const code = [
-      `if (${check}) {`,
-      ...[...declares, ...lines].map(line => '    ' + line),
-      `    return { ${nodeIdToLiteral(outputKey)}: ${nodeIdToLiteral(outputVar)} };`,
-      '  }',
-    ].join('\n');
-    return { code, inFnDef };
-  } else {
-    const inputs: string[] = [];
-    const outputs: string[] = [];
-    let outputType: 'var' | 'decl' | undefined;
-    for (const [key, value] of Object.entries(relationship)) {
-      if (cc.nav.isInput(key)) {
-        inputs.push(key);
-      } else if (cc.nav.isOutput(key)) {
-        outputs.push(key);
-        const outputVar = relationship[key]!;
-        if (outputType === undefined) {
-          outputType = cc.nav.isVar(outputVar) ? 'var' : 'decl';
-        } else {
-          assert(outputType === (cc.nav.isVar(outputVar) ? 'var' : 'decl'), 'If one output is a variable, all must be a variable.');
-        }
-      }
-    }
-
-    // Always using the same order is important, because the resulting string that gets built is compared with other strings.
-    inputs.sort((a, b) => a.localeCompare(b));
-
-    if (outputType === undefined) {
-      // The relationship doesn't have an output. It is only used for annotating something about the code, not for execution.
-      return;
-    }
-
-    if (outputType === 'var') {
-      const code = compileFnCall(cc, relationship);
-      return { code, inFnDef: undefined };
-    } else if (outputType === 'decl') {
-      const inFnDef = buildFnDef(cc, relationship);
-      const { check, declares } = buildConditionForFn(cc, relationship);
-      assert(declares.length === 0, 'Relationships with inputs as variables and outputs as non-variables are not supported. ' + JSON.stringify(relationship));
-
-      const outputFields: string[] = [];
-      for (const output of outputs) {
-        const outputVar = relationship[output]!;
-        outputFields.push(`${nodeIdToLiteral(output)}: ${nodeIdToLiteral(outputVar)}`);
-      }
-
-      const code = `if (${check}) return { ${outputFields.join(', ')} };`;
-      return { code, inFnDef };
-    } else {
-      throw new UnreachableCaseError(outputType);
-    }
+    return compileFunctionCall(cc, nodeId, sourceRelationship);
   }
 }
 
 function compileProgram(cc: CompilerCache): string {
-  const statementsByFnDef = new Map<string | undefined, string[]>();
-  for (const relationship of cc.nav.data.relationships) {
-    const compiled = compileRelationship(cc, relationship);
-    if (compiled === undefined) {
-      continue;
-    }
-    const { inFnDef, code } = compiled;
-
-    const codeInScope = statementsByFnDef.get(inFnDef) ?? [];
-    codeInScope.push(code);
-    statementsByFnDef.set(inFnDef, codeInScope);
-  }
-
-  const result: string[] = [];
-  for (const [fnDef, statements] of statementsByFnDef) {
-    if (fnDef === undefined) continue;
-    result.push(
-      `${fnDef} {`,
-      ...statements.map(line => '  ' + line),
-      '  throw new Error("Called with invalid arguments");',
-      '}',
-      '',
-    );
-  }
-
-  const parsedOutputRelationships = cc.exitRelationshipSchema.listParsedRelationships();
+  const parsedOutputRelationships = cc.exitRelationshipSchema.listParsedRelationships(cc.nav.data);
   assert(parsedOutputRelationships.length === 1, `There should be exactly one output, ${parsedOutputRelationships.length} found.`);
-  const finalNodeId = parsedOutputRelationships[0]!.fields.value;
-  const finalLine = `console.log("OUTPUT:", ${nodeIdToLiteral(finalNodeId)}.$repr);`;
+  const finalParsedRelationship = parsedOutputRelationships[0] ?? throwIndexOutOfBounds();
+  const finalNodeId = finalParsedRelationship.fields.value;
+  if (!cc.nav.isVar(finalNodeId)) {
+    cc.nav.reportError('The final output must be a variable.', finalParsedRelationship.raw);
+  }
+  const statements: CompiledLine[] = [{
+    type: 'statement',
+    line: `console.log("OUTPUT:", ${nodeIdToLiteral(finalNodeId)}.$repr);`,
+    varDependencies: [finalNodeId],
+    supplies: undefined,
+  }];
 
-  return [
-    ...result,
-    ...statementsByFnDef.get(undefined) ?? [],
-    '',
-    finalLine,
-  ].join('\n');
+  const stack: { varId: NodeId, sourceRelationship: RelationshipData }[] = [
+    { varId: finalNodeId, sourceRelationship: finalParsedRelationship.raw },
+  ];
+  while (stack.length > 0) {
+    const { varId, sourceRelationship } = stack.pop() ?? throwIndexOutOfBounds();
+    statements.push(...compileProducerOfNodeId(cc, varId, sourceRelationship));
+  }
+
+  return reorderCompiledLines(statements).map(s => s.type === 'statement' ? s.line : s.content).join('\n');
 }
 
 export function bedrockToJs(bedrockData: BedrockData) {
@@ -408,9 +305,6 @@ export function bedrockToJs(bedrockData: BedrockData) {
   const cc = new CompilerCache(nav);
 
   const result = compileProgram(cc);
-
-  // <--
-  // nav.assertAllMarkedAsCompiled();
 
   return result;
 }

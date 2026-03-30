@@ -10,8 +10,13 @@ def anotherThing {
     def b
     def result
   }
+
+  // You can use global:... to reach into the outer-most scope
+  // Otherwise you're limited to only seeing what's in the function's scope, and not anything outside of it.
+  fn(global:thing=thing, b=thing, result=thing)
 }
 
 // `:` to access a sub-scope.
 // keys are automatically fetched from the function's scope.
-anotherThing:fn(a=thing, b=thing)->result
+// At the top-level, you don't do the `->` syntax, instead you provide all parameters/returns inside the `(...)`.
+anotherThing:fn(a=thing, b=thing, result=thing)

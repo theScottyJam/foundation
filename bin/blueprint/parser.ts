@@ -1,45 +1,42 @@
 // TODO: I'm not really handling unexpected EOF errors very well.
-import type { Position, Range, Token } from './shared.ts';
-import { EOF, RESERVED_CHARS, Tokenizer } from './Tokenizer.ts';
+import type { BedrockData, Position, Range } from '../types.ts';
+import { EOF, RESERVED_CHARS, Tokenizer, type Token } from './Tokenizer.ts';
 import { assert, throwIndexOutOfBounds } from '../util.ts';
 import type { ParseContext, VarDef, IdentifierNode, Relationship, MutableRelationship, IdentifierSeries } from './parserTools.ts';
 import * as tools from './parserTools.ts';
-import { registerStdLibLinks } from './stdLibLinks.ts';
-
-interface BedrockData {
-  readonly relationships: Record<string, string>[]
-  readonly links: Record<string, string>
-}
+import { getStdLibLinks } from './stdLibLinks.ts';
 
 export const KEYWORDS = ['def', 'link'];
 
 export function parse(text: string): BedrockData {
-  const ctx_: Omit<ParseContext, 'stdLibLinks'> = {
+  const globalScope = { labelToDef: new Map() };
+  const ctx: ParseContext = {
     tokenizer: new Tokenizer(text),
     varIdToLabel: new Map(),
     links: new Map(),
-    scopes: [{ labelToDef: new Map() }],
+    globalScope,
+    scopes: [globalScope],
+    stdLibLinks: getStdLibLinks(),
     nextId: 0,
   };
-
-  const stdLibLinks = registerStdLibLinks(ctx_);
-  const ctx = { ...ctx_, stdLibLinks };
 
   const relationships = parseStatementList(ctx, { endAt: EOF });
 
   const transformId = (id: number) => {
-    if (id === ctx.stdLibLinks.relationshipTypeId) {
-      return 'type';
-    }
     const label = ctx.varIdToLabel.get(id);
     return label === undefined ? String(id) : `${id}:${label}`;
   };
 
   return {
+    sourceText: text,
     relationships: relationships.map(relationship => {
-      return Object.fromEntries(
-        [...relationship.entries()].map(([key, value]) => [transformId(key), transformId(value)]),
-      );
+      return {
+        type: transformId(relationship.type),
+        mapping: Object.fromEntries(
+          [...relationship.mapping.entries()].map(([key, value]) => [transformId(key), transformId(value)]),
+        ),
+        range: relationship.range,
+      };
     }),
     links: Object.fromEntries(
       [...ctx.links.entries()].map(([key, value]) => [key, transformId(value)]),
@@ -185,7 +182,7 @@ function parseFunctionCall(
 ): Omit<ExpressionNode, 'returnedVarId'> & { returnedVarId: number | undefined } {
   const fnDef = tools.lookupVarSeries(ctx, fnNameSeries);
 
-  const start = ctx.tokenizer.peek().range.start;
+  const start = fnNameSeries.range.start;
 
   tools.assertToken(ctx, ['(']).next();
 
@@ -194,8 +191,10 @@ function parseFunctionCall(
   }
 
   const childRelationships: Relationship[] = [];
-  const relationship: MutableRelationship = new Map();
-  relationship.set(ctx.stdLibLinks.relationshipTypeId, fnDef.id);
+  const relationship: MutableRelationship = {
+    type: fnDef.id,
+    mapping: new Map(),
+  };
 
   const keyScope: tools.Scope = {
     labelToDef: new Map(fnDef.varsInModule),
@@ -203,16 +202,16 @@ function parseFunctionCall(
 
   let endParenToken: Token;
   while (true) {
-    const keyNode = parseIdentifier(ctx);
+    const keyNode = parseIdentifierSeries(ctx);
     const keyDef = tools.replaceScope(ctx, keyScope, () => {
-      return tools.lookupVar(ctx, keyNode);
+      return tools.lookupVarSeries(ctx, keyNode);
     });
     tools.assertToken(ctx, ['=']).next();
     const valueNode = parseExpression(ctx);
-    if (relationship.has(keyDef.id)) {
+    if (relationship.mapping.has(keyDef.id)) {
       tools.reportError(ctx, 'This same key got used in this relationship multiple times.', keyNode.range);
     }
-    relationship.set(keyDef.id, valueNode.returnedVarId);
+    relationship.mapping.set(keyDef.id, valueNode.returnedVarId);
     childRelationships.push(...valueNode.relationships);
 
     const commaFound = ctx.tokenizer.peek().value === ',';
@@ -236,7 +235,10 @@ function parseFunctionCall(
     }
 
     return {
-      relationships: [...childRelationships, relationship],
+      relationships: [
+        ...childRelationships,
+        { ...relationship, range },
+      ],
       returnedVarId: undefined,
       range,
     };
@@ -245,9 +247,9 @@ function parseFunctionCall(
   tools.assertToken(ctx, ['-']).next();
   tools.assertToken(ctx, ['>']).next();
 
-  const returnParamName = parseIdentifier(ctx);
+  const returnParamName = parseIdentifierSeries(ctx);
   const returnParamDef = tools.replaceScope(ctx, keyScope, () => {
-    return tools.lookupVar(ctx, returnParamName);
+    return tools.lookupVarSeries(ctx, returnParamName);
   });
 
   const range = { start, end: returnParamName.range.end };
@@ -256,16 +258,16 @@ function parseFunctionCall(
   }
 
   const outputVarId = tools.genNextVarId(ctx);
-  if (relationship.has(returnParamDef.id)) {
+  if (relationship.mapping.has(returnParamDef.id)) {
     tools.reportError(ctx, 'This same key got used in this relationship multiple times.', returnParamName.range);
   }
-  relationship.set(returnParamDef.id, outputVarId);
+  relationship.mapping.set(returnParamDef.id, outputVarId);
 
   return {
     relationships: [
       ...childRelationships,
       ctx.stdLibLinks.markAsVar(ctx, outputVarId, range),
-      relationship,
+      { ...relationship, range },
     ],
     returnedVarId: outputVarId,
     range,

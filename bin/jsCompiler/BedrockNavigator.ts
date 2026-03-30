@@ -1,17 +1,26 @@
 import assert from 'node:assert/strict';
 import { throwIndexOutOfBounds } from '../util.ts';
-
-export type Relationship = Record<string, string>;
-
-export interface BedrockData {
-  readonly relationships: Relationship[]
-  readonly links: Record<string, string>
-}
+import type { BedrockData, Range, RelationshipData } from '../types.ts';
+import { buildErrorWithUnderlinedText } from '../errorFormatter.ts';
 
 export type NodeId = string;
 
-/** All relationships should have this as a key to identify what the relationship is */
-const RELATIONSHIP_TYPE = '1c6c63c0-c0ae-4a64-af72-ed32de0de764';
+function reprRelationship(relationship: RelationshipData) {
+  return (
+    relationship.type +
+    '(' +
+    Object.entries(relationship.mapping).map(([key, value]) => `${key}=${value}`).join(', ') +
+    ')'
+  );
+}
+
+function reportError(data: BedrockData, message: string, relationship: RelationshipData): never {
+  throw new Error(buildErrorWithUnderlinedText(message + `\nRelationship: ${reprRelationship(relationship)}`, {
+    fileContents: data.sourceText,
+    start: relationship.range.start.index,
+    end: relationship.range.end.index,
+  }));
+}
 
 function fromUuid(data: BedrockData, uuid: string): NodeId {
   const nodeId = data.links[uuid];
@@ -19,12 +28,10 @@ function fromUuid(data: BedrockData, uuid: string): NodeId {
   return nodeId;
 }
 
-function findRelationshipsByType(data: BedrockData, typeId: NodeId): Relationship[] {
-  const relationshipTypeId = fromUuid(data, RELATIONSHIP_TYPE);
-
-  const relationships: Relationship[] = [];
+function findRelationshipsByType(data: BedrockData, typeId: NodeId): RelationshipData[] {
+  const relationships: RelationshipData[] = [];
   for (const relationship of data.relationships) {
-    if (relationship[relationshipTypeId] === typeId) {
+    if (relationship.type === typeId) {
       relationships.push(relationship);
     }
   }
@@ -34,34 +41,33 @@ function findRelationshipsByType(data: BedrockData, typeId: NodeId): Relationshi
 
 interface ParsedRelationship<Fields extends string> {
   readonly fields: Record<Fields, NodeId>
-  readonly raw: Relationship
+  readonly raw: RelationshipData
 }
 
 interface RelationshipSchemaConstructorOpts<Fields extends string> {
-  readonly data: BedrockData
   readonly typeId: NodeId
   readonly fieldNameToId: Record<Fields, NodeId>
 }
 
 export class RelationshipSchema<Fields extends string> {
-  readonly #data: BedrockData;
-  readonly #relationshipTypeId: NodeId;
   readonly typeId: NodeId;
   readonly fieldNameToId: Record<Fields, NodeId>;
-  constructor({ data, typeId, fieldNameToId }: RelationshipSchemaConstructorOpts<Fields>) {
-    this.#data = data;
-    this.#relationshipTypeId = fromUuid(data, RELATIONSHIP_TYPE);
+  constructor({ typeId, fieldNameToId }: RelationshipSchemaConstructorOpts<Fields>) {
     this.typeId = typeId;
     this.fieldNameToId = fieldNameToId;
   }
 
-  parse(relationship: Relationship): ParsedRelationship<Fields> {
-    assert(relationship[this.#relationshipTypeId] === this.typeId, 'The relationship is not of the correct type.');
+  parse(data: BedrockData, relationship: RelationshipData): ParsedRelationship<Fields> {
+    if (relationship.type !== this.typeId) {
+      reportError(data, 'The relationship is not of the correct type.', relationship);
+    }
 
     const result: Partial<Record<Fields, NodeId>> = Object.create(null);
     for (const [fieldName, fieldId] of Object.entries(this.fieldNameToId) as [Fields, NodeId][]) {
-      const nodeId = relationship[fieldId];
-      assert(nodeId, `The relationship ${JSON.stringify(relationship)} is missing a ${fieldName} field.`);
+      const nodeId = relationship.mapping[fieldId];
+      if (nodeId === undefined) {
+        reportError(data, `This relationship is missing a "${fieldName}" field.`, relationship);
+      }
       result[fieldName] = nodeId;
     }
 
@@ -72,13 +78,13 @@ export class RelationshipSchema<Fields extends string> {
   }
 
   #listedRelationships: ParsedRelationship<Fields>[] | undefined;
-  listParsedRelationships(): ParsedRelationship<Fields>[] {
+  listParsedRelationships(data: BedrockData): ParsedRelationship<Fields>[] {
     if (this.#listedRelationships !== undefined) {
       return this.#listedRelationships;
     }
 
-    this.#listedRelationships = findRelationshipsByType(this.#data, this.typeId)
-      .map(relationship => this.parse(relationship));
+    this.#listedRelationships = findRelationshipsByType(data, this.typeId)
+      .map(relationship => this.parse(data, relationship));
     return this.#listedRelationships;
   }
 }
@@ -88,78 +94,54 @@ export class BedrockNavigator {
   readonly #entityToTypeLookup: Record<NodeId, NodeId>;
   readonly #typeToEntityLookup: Record<NodeId, NodeId[]>;
   readonly #vars: Set<NodeId>;
-  readonly #ignore: Set<NodeId>;
   readonly #inputs: Set<NodeId>;
   readonly #outputs: Set<NodeId>;
-  readonly #outputVarIdToRelationship: Map<NodeId, Relationship>;
+  readonly #outputVarIdToNonSignatureRelationships: Map<NodeId, RelationshipData[]>;
+  readonly #relationshipIdToRelationship: Map<NodeId, RelationshipData>;
+  readonly #fnIdToSignatures: Map<NodeId, NodeId[]>;
   readonly typeRelationshipSchema: RelationshipSchema<'type' | 'target'>;
 
   constructor(data: BedrockData) {
     this.data = data;
 
     const varParsedRelationships = new RelationshipSchema({
-      data,
       typeId: fromUuid(data, '2b04c7d1-41c2-4e3c-b3c9-2741b304efbf'),
       fieldNameToId: {
         target: fromUuid(data, 'dffa84ea-5897-4be2-8c79-bc668e93bd23'),
       } as const,
-    }).listParsedRelationships();
+    }).listParsedRelationships(data);
     this.#vars = new Set(varParsedRelationships.map(r => r.fields.target));
 
     // TODO: Ideally I would assert all function keys aren't variables as well.
     const assertResolved = <T extends string>(parsedRelationships: ParsedRelationship<T>[]): ParsedRelationship<T>[] => {
       for (const parsedRelationship of parsedRelationships) {
-        for (const [key, value] of Object.entries<string>(parsedRelationship.fields)) {
-          assert(!this.#vars.has(value), `${value} cannot be set to a variable in ${JSON.stringify(parsedRelationship.raw)}`);
+        for (const value of Object.values<string>(parsedRelationship.fields)) {
+          if (this.#vars.has(value)) {
+            reportError(data, `${value} cannot be set to a variable`, parsedRelationship.raw);
+          }
         }
       }
 
       return parsedRelationships;
     };
 
-    const ignoreParsedRelationships = new RelationshipSchema({
-      data,
-      typeId: fromUuid(data, '6c3723e0-ca7e-4ef7-905a-b5680c5dc8a7'),
-      fieldNameToId: {
-        target: fromUuid(data, 'fe7e5b65-e801-4ce7-82d9-40e35b01d879'),
-      } as const,
-    }).listParsedRelationships();
-    this.#ignore = new Set(ignoreParsedRelationships.map(r => r.fields.target));
-
     const inputParsedRelationships = assertResolved(new RelationshipSchema({
-      data,
       typeId: fromUuid(data, '4fa938aa-3d98-4e79-8eac-4aad749ffaa9'),
       fieldNameToId: {
         target: fromUuid(data, '0f38cd20-0930-43d4-abcd-0ecd0b28dd69'),
       } as const,
-    }).listParsedRelationships());
+    }).listParsedRelationships(data));
     this.#inputs = new Set(inputParsedRelationships.map(r => r.fields.target));
 
     const outputParsedRelationships = assertResolved(new RelationshipSchema({
-      data,
       typeId: fromUuid(data, 'c9e807db-3c23-493a-9485-61f160557b3e'),
       fieldNameToId: {
         target: fromUuid(data, '8201a837-9620-4a70-8653-040fcacde2c8'),
       } as const,
-    }).listParsedRelationships());
+    }).listParsedRelationships(data));
     this.#outputs = new Set(outputParsedRelationships.map(r => r.fields.target));
 
-    const outputVarIdToRelationship = new Map<NodeId, Relationship>();
-    this.#outputVarIdToRelationship = outputVarIdToRelationship;
-    for (const relationship of data.relationships) {
-      const outputKeys = Object.keys(relationship).filter(key => this.#outputs.has(key));
-      assert(outputKeys.length <= 1, `Each relationship must have no more than one output. ${JSON.stringify(outputKeys)} found in ${JSON.stringify(relationship)}.`);
-      const outputKey = outputKeys[0];
-      if (outputKey !== undefined) {
-        const value = relationship[outputKey] ?? throwIndexOutOfBounds();
-        if (this.#vars.has(value)) {
-          outputVarIdToRelationship.set(value, relationship);
-        }
-      }
-    }
-
     this.typeRelationshipSchema = new RelationshipSchema({
-      data,
       typeId: fromUuid(data, '5bc48f39-0abd-4fad-8b55-9cdc18a01ef0'),
       fieldNameToId: {
         target: fromUuid(data, '258e9ab7-b7fb-4697-891c-9962cac9ab69'),
@@ -170,21 +152,68 @@ export class BedrockNavigator {
     const entityToTypeLookup: Record<NodeId, NodeId> = Object.create(null);
     const typeToEntityLookup: Record<NodeId, NodeId[]> = Object.create(null);
 
-    for (const parsedRelationship of assertResolved(this.typeRelationshipSchema.listParsedRelationships())) {
+    for (const parsedRelationship of assertResolved(this.typeRelationshipSchema.listParsedRelationships(data))) {
       entityToTypeLookup[parsedRelationship.fields.target] = parsedRelationship.fields.type;
       (typeToEntityLookup[parsedRelationship.fields.type] ??= []).push(parsedRelationship.fields.target);
     }
 
     this.#entityToTypeLookup = entityToTypeLookup;
     this.#typeToEntityLookup = typeToEntityLookup;
+
+    const relationshipIdToRelationship = new Map<NodeId, RelationshipData>();
+    const relationshipIdKey = fromUuid(data, '6c3723e0-ca7e-4ef7-905a-b5680c5dc8a7');
+    for (const relationship of this.data.relationships) {
+      if (relationshipIdKey in relationship.mapping) {
+        const relationshipId = relationship.mapping[relationshipIdKey] ?? throwIndexOutOfBounds();
+        relationshipIdToRelationship.set(relationshipId, relationship);
+      }
+    }
+    this.#relationshipIdToRelationship = relationshipIdToRelationship;
+
+    const fnSignatureMarkers = assertResolved(new RelationshipSchema({
+      typeId: fromUuid(data, 'b1fb74a3-e4e1-4e79-bec2-fef9e4fe5ba3'),
+      fieldNameToId: {
+        target: fromUuid(data, 'afad68d8-6b22-4881-9346-ab0795d367d6'),
+      } as const,
+    }).listParsedRelationships(data));
+
+    const fnIdToSignatures = new Map<NodeId, NodeId[]>();
+    for (const parsedRelationship of fnSignatureMarkers) {
+      const relationshipId = parsedRelationship.fields.target;
+      const type = relationshipIdToRelationship.get(relationshipId)?.type ?? throwIndexOutOfBounds();
+      const signatures = fnIdToSignatures.get(type) ?? [];
+      fnIdToSignatures.set(type, signatures);
+      signatures.push(relationshipId);
+    }
+    this.#fnIdToSignatures = fnIdToSignatures;
+
+    const outputVarIdToRelationship = new Map<NodeId, RelationshipData[]>();
+    for (const relationship of data.relationships) {
+      const outputKeys = Object.keys(relationship.mapping).filter(key => this.#outputs.has(key));
+      if (outputKeys.length > 1) {
+        reportError(data, `Each relationship must have no more than one output. ${JSON.stringify(outputKeys)} found.`, relationship);
+      }
+      const outputKey = outputKeys[0];
+      if (outputKey !== undefined) {
+        const value = relationship.mapping[outputKey] ?? throwIndexOutOfBounds();
+        if (this.#vars.has(value)) {
+          const isSignatureRelationship = (
+            relationship.mapping[relationshipIdKey] !== undefined &&
+            relationshipIdToRelationship.has(relationship.mapping[relationshipIdKey])
+          );
+          if (!isSignatureRelationship) {
+            const relationships = outputVarIdToRelationship.get(value) ?? [];
+            outputVarIdToRelationship.set(value, relationships);
+            relationships.push(relationship);
+          }
+        }
+      }
+    }
+    this.#outputVarIdToNonSignatureRelationships = outputVarIdToRelationship;
   }
 
   isVar(nodeId: NodeId): boolean {
     return this.#vars.has(nodeId);
-  }
-
-  shouldIgnore(nodeId: NodeId): boolean {
-    return this.#ignore.has(nodeId);
   }
 
   isInput(nodeId: NodeId): boolean {
@@ -195,16 +224,22 @@ export class BedrockNavigator {
     return this.#outputs.has(nodeId);
   }
 
+  lookupFnSignatureIds(fnId: NodeId): NodeId[] {
+    const result = this.#fnIdToSignatures.get(fnId);
+    assert(result !== undefined, `${fnId} is not associated with a function signature.`);
+    return result;
+  }
+
+  lookupRelationship(relationshipId: NodeId): RelationshipData {
+    return this.#relationshipIdToRelationship.get(relationshipId) ?? throwIndexOutOfBounds();
+  }
+
   fromUuid(uuid: string): NodeId {
     return fromUuid(this.data, uuid);
   }
 
-  getRelationshipType(relationship: Relationship): NodeId {
-    const relationshipTypeId = this.fromUuid(RELATIONSHIP_TYPE);
-    const type = relationship[relationshipTypeId];
-    // TODO: Stop treating relationship types as just another property in a relationship, special-case it so it can never be missing.
-    assert(type !== undefined, `The relationship ${JSON.stringify(relationship)} is missing a type (key: ${relationshipTypeId}).`);
-    return type;
+  tryGetTypeOfEntity(entityId: NodeId): NodeId | undefined {
+    return this.#entityToTypeLookup[entityId];
   }
 
   getTypeOfEntity(entityId: NodeId): NodeId {
@@ -217,15 +252,49 @@ export class BedrockNavigator {
     return this.#typeToEntityLookup[typeId] ?? [];
   }
 
-  relationshipFromOutputVarId(outputVarId: NodeId): Relationship {
-    const relationship = this.#outputVarIdToRelationship.get(outputVarId);
-    assert(relationship !== undefined, `${outputVarId} it not an output var ID for any relationships.`);
-    return relationship;
+  /**
+   * {@link sourceRelationship} is where this outputVarId was found, so if we fail to look it up, we know what line to highlight.
+   *
+   * Returns all relationships (that aren't marked as a function signature) that produces the {@link outputVarId} as an output.
+   */
+  nonSignatureRelationshipsFromOutputVarId(outputVarId: NodeId, sourceRelationship: RelationshipData): RelationshipData[] {
+    const relationships = this.#outputVarIdToNonSignatureRelationships.get(outputVarId);
+    if (relationships === undefined) {
+      reportError(this.data, `${outputVarId} is not an output var ID for any relationships.`, sourceRelationship);
+    }
+    assert(relationships.length > 0);
+    return relationships;
+  }
+
+  reportError(message: string, relationship: RelationshipData): never {
+    reportError(this.data, message, relationship);
   }
 
   isFullyResolved <T extends string>(parsedRelationship: ParsedRelationship<T>) {
     return Object.values<string>(parsedRelationship.fields).every(value => !this.#vars.has(value));
   };
+
+  getInputsAndOutputs(relationship: RelationshipData) {
+    const inputNodeIds: NodeId[] = [];
+    let outputNodeId: NodeId | undefined;
+    for (const [key, value] of Object.entries(relationship.mapping)) {
+      if (this.isInput(key)) {
+        inputNodeIds.push(key);
+      } else if (this.isOutput(key)) {
+        if (outputNodeId !== undefined) {
+          this.reportError(`This relationship had more than one output, including ${outputNodeId} and ${key}.`, relationship);
+        }
+
+        outputNodeId = key;
+      }
+    }
+
+    if (outputNodeId === undefined) {
+      this.reportError('This relationship did not have any outputs.', relationship);
+    }
+
+    return { inputNodeIds, outputNodeId };
+  }
 
   // Maps `relationship ID` to a `entity ID -> property value` mapping
   #propertyCache: Record<NodeId, Record<NodeId, NodeId>> = Object.create(null);
@@ -242,7 +311,7 @@ export class BedrockNavigator {
     }
 
     const cacheForRelationship: Record<NodeId, NodeId> = Object.create(null);
-    for (const relationship of relationshipSchema.listParsedRelationships()) {
+    for (const relationship of relationshipSchema.listParsedRelationships(this.data)) {
       if (this.isFullyResolved(relationship)) {
         cacheForRelationship[relationship.fields.target] = relationship.fields[propName];
       }
@@ -251,37 +320,4 @@ export class BedrockNavigator {
     this.#propertyCache[relationshipSchema.typeId] = cacheForRelationship;
     return cacheForRelationship[entityId];
   }
-
-  // <--
-  // #markedAsCompiled = new Set<string>();
-  // /**
-  //  * Any relationship with a relationship-id can be marked as "compiled" by this function
-  //  * when it's getting used in the compiled output. Later, we can check to see if
-  //  * there are any relationships that got missed - if so, that will be an error,
-  //  * because those relationships may contain rules that contradict the rules that were just compiled - we
-  //  * don't know for sure, so excess rules are forbidden.
-  //  */
-  // markAsCompiled(relationship: Relationship) {
-  //   const relationshipIdKey = lookupId(this.data, RELATIONSHIP_ID);
-  //   const relationshipId = relationship[relationshipIdKey];
-  //   assert(
-  //     relationshipId !== undefined,
-  //     'Attempted to mark a relationship as compiled, but it did not have a relationship ID - only those with relationship IDs need to be marked. Relationship: ' + JSON.stringify(relationship),
-  //   );
-
-  //   this.#markedAsCompiled.add(relationshipId);
-  // }
-
-  // /** Should be called after compilation is done to make sure everything got compiled that should have. */
-  // assertAllMarkedAsCompiled() {
-  //   const relationshipIdKey = lookupId(this.data, RELATIONSHIP_ID);
-  //   for (const relationship of this.data.relationships) {
-  //     const relationshipId = relationship[relationshipIdKey];
-  //     // We're not going to worry about anything that isn't conditionally compiled (i.e. things that aren't registered as rules). Those don't
-  //     // tend to cause as much trouble.
-  //     if (relationshipId !== undefined && !this.isMarkedAsTrue(relationshipId)) {
-  //       assert(this.#markedAsCompiled.has(relationshipId), `The relationship ${JSON.stringify(relationship)} did not get used during compilation.`);
-  //     }
-  //   }
-  // }
 }

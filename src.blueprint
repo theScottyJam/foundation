@@ -1,0 +1,175 @@
+// -- standard bedrock tools -- //
+
+def true
+def false
+
+def isInput {
+  link 4fa938aa-3d98-4e79-8eac-4aad749ffaa9
+  def target { link 0f38cd20-0930-43d4-abcd-0ecd0b28dd69 }
+}
+
+def isOutput {
+  link c9e807db-3c23-493a-9485-61f160557b3e
+  def target { link 8201a837-9620-4a70-8653-040fcacde2c8 }
+}
+
+isInput(target=isInput:target)
+isInput(target=isOutput:target)
+
+def isVar {
+  link 2b04c7d1-41c2-4e3c-b3c9-2741b304efbf
+  def target { link dffa84ea-5897-4be2-8c79-bc668e93bd23 isInput(target=self) }
+}
+
+def relationshipId { link 6c3723e0-ca7e-4ef7-905a-b5680c5dc8a7 }
+
+def isFnSignature {
+  link b1fb74a3-e4e1-4e79-bec2-fef9e4fe5ba3
+  def target { link afad68d8-6b22-4881-9346-ab0795d367d6 isInput(target=self) }
+}
+
+def not {
+  link 5833f84b-7ec6-4c14-b9b4-6afa554987ce
+  def operand { link 52acc525-0ddf-4b4f-acac-4c92c45fd2a5 isInput(target=self) }
+  def result { isOutput(target=self) }
+
+  self(operand=true, result=false)
+  self(operand=false, result=true)
+}
+
+def and {
+  link 876a450c-778d-44a3-aae4-e4abd21b6cf0
+  def left { link 96a0773b-d697-4397-a83e-c5dccb4287d9 isInput(target=self) }
+  def right { link 46560cd5-7339-4755-86bf-2ec963b6dfec isInput(target=self) }
+  def result { isOutput(target=self) }
+
+  self(left=true, right=true, result=true)
+  self(left=true, right=false, result=false)
+  self(left=false, right=true, result=false)
+  self(left=false, right=false, result=false)
+}
+
+def then {
+  link 0c715b0f-0beb-41ea-809a-cbb0a4e4ab4d
+  def left { link 2fb3e027-21cd-4dc7-95ec-e73a3956f1f9 isInput(target=self) }
+  def right { link 73528fa9-2ce9-432c-962a-365c337406c8 isInput(target=self) }
+  def result { isOutput(target=self) }
+
+  self(left=true, right=true, result=true)
+  self(left=true, right=false, result=false)
+  self(left=false, right=true, result=true)
+  self(left=false, right=false, result=true)
+}
+
+// Externally defined
+def is {
+  link 4b33c2ce-1303-40d6-8053-237ae570c5b4
+
+  def left { link facdc04f-fbc0-489d-88a5-5f59f8eb624e  isInput(target=self) }
+  def right { link c1fbd400-9fe0-47f6-80db-da450e246011 isInput(target=self) }
+  def result { isOutput(target=self) }
+}
+
+
+// -- standard js-compiler tools -- //
+
+def type {
+  link 5bc48f39-0abd-4fad-8b55-9cdc18a01ef0
+  def target { link 258e9ab7-b7fb-4697-891c-9962cac9ab69 isInput(target=self) }
+  def type { link fe775f8a-2f8a-49e4-a079-6d9234b9354a isOutput(target=self) }
+}
+
+def programExit {
+  link 86b33c24-e4c1-4790-a4d9-1c8af3030b34
+  def value { link 381dde34-25e1-4c1b-a3f3-762d9ada9f9c isInput(target=self) }
+}
+
+def Natural {
+  link 0f7b46ea-451d-40f2-9a34-3a4530667814
+
+  def previous {
+    link 10037d13-bbd0-4f60-8e47-7b1635e620f4
+    def target { link 7edaef67-1e08-4472-95a9-89a212e6504c isInput(target=self) }
+    def previous { link 1a3fbabd-02e6-427b-9f46-2c20b16d71e4 isOutput(target=self) }
+  }
+
+  def next {
+    def target { isInput(target=self) }
+    def next { isOutput(target=self) }
+  }
+}
+
+def 0 {
+  type(target=self, type=Natural)
+}
+
+def 1 {
+  type(target=self, type=Natural)
+  Natural:previous(target=self, previous=0)
+  Natural:next(target=0, next=self)
+}
+
+def 2 {
+  type(target=self, type=Natural)
+  Natural:previous(target=self, previous=1)
+  Natural:next(target=1, next=self)
+}
+
+def 3 {
+  type(target=self, type=Natural)
+  Natural:previous(target=self, previous=2)
+  Natural:next(target=2, next=self)
+}
+
+def 4 {
+  type(target=self, type=Natural)
+  Natural:previous(target=self, previous=3)
+  Natural:next(target=3, next=self)
+}
+
+def 5 {
+  type(target=self, type=Natural)
+  Natural:previous(target=self, previous=4)
+  Natural:next(target=4, next=self)
+}
+
+
+// -- The program -- //
+
+def sum {
+  def left { isInput(target=self) }
+  def right { isInput(target=self) }
+  def result { isOutput(target=self) }
+
+  def $left { isVar(target=self) }
+  def $right { isVar(target=self) }
+  def $result { isVar(target=self) }
+  def sumDef { isFnSignature(target=self) }
+
+  sum(left=$left, right=$right, result=$result, global:relationshipId=sumDef)
+  then(
+    left=is(left=$right, right=0)->result,
+    right=is(left=$result, right=$left)->result,
+    result=true,
+  )
+  /*
+  then(
+    left=not(
+      operand=is(left=$left, right=0)->result
+    )->result,
+    right=is(
+      left=$result,
+      right=Natural:next(
+        target=sum(
+          left=$left,
+          right=Natural:previous(target=$right)->previous
+        )->result,
+      )->next
+    )->result,
+    result=true,
+  )
+  */
+}
+
+// programExit(value=sum(left=3, right=2)->result)
+programExit(value=sum(left=3, right=0)->result)
