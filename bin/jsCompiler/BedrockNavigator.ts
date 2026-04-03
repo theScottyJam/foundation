@@ -39,7 +39,7 @@ function findRelationshipsByType(data: BedrockData, typeId: NodeId): Relationshi
   return relationships;
 }
 
-interface ParsedRelationship<Fields extends string> {
+export interface ParsedRelationship<Fields extends string> {
   readonly fields: Record<Fields, NodeId>
   readonly raw: RelationshipData
 }
@@ -225,9 +225,7 @@ export class BedrockNavigator {
   }
 
   lookupFnSignatureIds(fnId: NodeId): NodeId[] {
-    const result = this.#fnIdToSignatures.get(fnId);
-    assert(result !== undefined, `${fnId} is not associated with a function signature.`);
-    return result;
+    return this.#fnIdToSignatures.get(fnId) ?? [];
   }
 
   lookupRelationship(relationshipId: NodeId): RelationshipData {
@@ -252,6 +250,8 @@ export class BedrockNavigator {
     return this.#typeToEntityLookup[typeId] ?? [];
   }
 
+  findRelationshipsByType = findRelationshipsByType;
+
   /**
    * {@link sourceRelationship} is where this outputVarId was found, so if we fail to look it up, we know what line to highlight.
    *
@@ -259,11 +259,7 @@ export class BedrockNavigator {
    */
   nonSignatureRelationshipsFromOutputVarId(outputVarId: NodeId, sourceRelationship: RelationshipData): RelationshipData[] {
     const relationships = this.#outputVarIdToNonSignatureRelationships.get(outputVarId);
-    if (relationships === undefined) {
-      reportError(this.data, `${outputVarId} is not an output var ID for any relationships.`, sourceRelationship);
-    }
-    assert(relationships.length > 0);
-    return relationships;
+    return relationships ?? [];
   }
 
   reportError(message: string, relationship: RelationshipData): never {

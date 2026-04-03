@@ -1,0 +1,5 @@
+A `then` will be compiled down into an if-then statement, where the left-hand side can be an arbitrary boolean expression while the right-hand side must be `is`. `is` can also be placed top-level if you don't want an assignment to be conditioned on something.
+`is` compiles down to assignment (unless it's in the left-hand side of `then`, in which case it will be equality).
+The order of `is` operands matter - the left-hand side becomes the variable being assigned to and the right-hand side is the value it is receiving.
+
+A function is defined by creating a relationship with a "relationshipId" property, then marking that property as a type signature. Generally, each input and output in that function will be set to a variable - this will translate to the parameters and returns. Then you can wire up other code to transform those variables.

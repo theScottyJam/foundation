@@ -1,6 +1,6 @@
 // -- standard bedrock tools -- //
 
-def true
+def true { link a27cca07-59ad-4394-a602-7b114f0d5b3b }
 def false
 
 def isInput {
@@ -33,8 +33,8 @@ def not {
   def operand { link 52acc525-0ddf-4b4f-acac-4c92c45fd2a5 isInput(target=self) }
   def result { isOutput(target=self) }
 
-  self(operand=true, result=false)
-  self(operand=false, result=true)
+  // self(operand=true, result=false)
+  // self(operand=false, result=true)
 }
 
 def and {
@@ -43,22 +43,22 @@ def and {
   def right { link 46560cd5-7339-4755-86bf-2ec963b6dfec isInput(target=self) }
   def result { isOutput(target=self) }
 
-  self(left=true, right=true, result=true)
-  self(left=true, right=false, result=false)
-  self(left=false, right=true, result=false)
-  self(left=false, right=false, result=false)
+  // self(left=true, right=true, result=true)
+  // self(left=true, right=false, result=false)
+  // self(left=false, right=true, result=false)
+  // self(left=false, right=false, result=false)
 }
 
 def then {
   link 0c715b0f-0beb-41ea-809a-cbb0a4e4ab4d
   def left { link 2fb3e027-21cd-4dc7-95ec-e73a3956f1f9 isInput(target=self) }
   def right { link 73528fa9-2ce9-432c-962a-365c337406c8 isInput(target=self) }
-  def result { isOutput(target=self) }
+  def result { link 89631b26-ee75-4d5f-869e-dc0c9ff65057 isOutput(target=self) }
 
-  self(left=true, right=true, result=true)
-  self(left=true, right=false, result=false)
-  self(left=false, right=true, result=true)
-  self(left=false, right=false, result=true)
+  // self(left=true, right=true, result=true)
+  // self(left=true, right=false, result=false)
+  // self(left=false, right=true, result=true)
+  // self(left=false, right=false, result=true)
 }
 
 // Externally defined
@@ -67,7 +67,7 @@ def is {
 
   def left { link facdc04f-fbc0-489d-88a5-5f59f8eb624e  isInput(target=self) }
   def right { link c1fbd400-9fe0-47f6-80db-da450e246011 isInput(target=self) }
-  def result { isOutput(target=self) }
+  def result { link 57f0bba0-cfa6-49c1-8727-bc1f0b577a18 isOutput(target=self) }
 }
 
 
@@ -152,10 +152,9 @@ def sum {
     right=is(left=$result, right=$left)->result,
     result=true,
   )
-  /*
   then(
     left=not(
-      operand=is(left=$left, right=0)->result
+      operand=is(left=$right, right=0)->result
     )->result,
     right=is(
       left=$result,
@@ -168,7 +167,6 @@ def sum {
     )->result,
     result=true,
   )
-  */
 }
 
 // programExit(value=sum(left=3, right=2)->result)
