@@ -49,6 +49,8 @@ export interface ParseContext {
   scopes: Scope[]
   /** May be mutated during parsing */
   nextId: number
+  /** May be mutated during parsing */
+  relationships: Relationship[]
 }
 
 export function reportError(ctx: ParseContext, message: string, range: Range): never {
@@ -134,4 +136,8 @@ export function tryLookupVar(ctx: ParseContext, identifier: string): VarDef | un
 
 export function genNextVarId(ctx: ParseContext) {
   return ctx.nextId++;
+}
+
+export function addRelationships(ctx: ParseContext, relationships: Relationship[]) {
+  ctx.relationships.push(...relationships);
 }

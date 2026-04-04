@@ -121,12 +121,23 @@ def 5 {
   Natural:next(target=4, next=self)
 }
 
+def firstParam {
+  link 4aaf3269-93d6-4788-a6bc-d1d2d4fe1f74
+  def target { link e8fd4f90-dc0e-40b7-a54f-bb52f3a6ffa2 isInput(target=self) }
+}
+
+def nextParam {
+  link 0bc9e0db-ec1a-4be9-9211-ff148f3a4300
+  def previous { link eaad4e5b-b30e-43bb-9be5-1eeb9ea776ed isInput(target=self) }
+  def target { link 4783bb9b-6f82-4b2a-ba5d-77ddd4b81a73 isInput(target=self) }
+}
+
 
 // -- The program -- //
 
 def sum {
-  def left { isInput(target=self) }
-  def right { isInput(target=self) }
+  def left { isInput(target=self) firstParam(target=self) }
+  def right { isInput(target=self) nextParam(previous=left, target=self) }
   def result { isOutput(target=self) }
 
   def $left { isVar(target=self) }

@@ -18,9 +18,10 @@ export function parse(text: string): BedrockData {
     scopes: [globalScope],
     stdLibLinks: getStdLibLinks(),
     nextId: 0,
+    relationships: [],
   };
 
-  const relationships = parseStatementList(ctx, { endAt: EOF });
+  parseStatementList(ctx, { endAt: EOF });
 
   const transformId = (id: number) => {
     const label = ctx.varIdToLabel.get(id);
@@ -29,7 +30,7 @@ export function parse(text: string): BedrockData {
 
   return {
     sourceText: text,
-    relationships: relationships.map(relationship => {
+    relationships: ctx.relationships.map(relationship => {
       return {
         type: transformId(relationship.type),
         mapping: Object.fromEntries(
@@ -45,27 +46,26 @@ export function parse(text: string): BedrockData {
 }
 
 /** endAt support being set to {@link EOF} */
-function parseStatementList(ctx: ParseContext, opts: { endAt: string }): Relationship[] {
-  const result: Relationship[] = [];
+function parseStatementList(ctx: ParseContext, opts: { endAt: string }): void {
   while (ctx.tokenizer.peek().value !== opts.endAt) {
-    result.push(...parseStatement(ctx));
+    parseStatement(ctx);
   }
-  return result;
 }
 
-function parseStatement(ctx: ParseContext): Relationship[] {
+function parseStatement(ctx: ParseContext): void {
   if (ctx.tokenizer.peek().value === 'def') {
-    return parseDefinition(ctx);
+    parseDefinition(ctx);
+    return;
   }
   if (ctx.tokenizer.peek().value === 'link') {
     parseLink(ctx);
-    return [];
+    return;
   }
 
-  return parseExpressionInStatementPos(ctx);
+  tools.addRelationships(ctx, parseExpressionInStatementPos(ctx));
 }
 
-function parseDefinition(ctx: ParseContext): Relationship[] {
+function parseDefinition(ctx: ParseContext): void {
   tools.assertToken(ctx, ['def']).next();
 
   const identifierNode = parseIdentifier(ctx);
@@ -89,10 +89,10 @@ function parseDefinition(ctx: ParseContext): Relationship[] {
   def.varsInModule.set('self', def);
 
   if (ctx.tokenizer.peek().value !== '{') {
-    return [];
+    return;
   }
 
-  return tools.enterScope(
+  tools.enterScope(
     ctx,
     {
       // If labelToDef is mutated and items are added, they'll be added to def.varsInModule.
@@ -100,9 +100,8 @@ function parseDefinition(ctx: ParseContext): Relationship[] {
     },
     () => {
       tools.assertToken(ctx, ['{']).next();
-      const result = parseStatementList(ctx, { endAt: '}' });
+      parseStatementList(ctx, { endAt: '}' });
       tools.assertToken(ctx, ['}']).next();
-      return result;
     },
   );
 }
