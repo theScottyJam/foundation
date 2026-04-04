@@ -35,13 +35,60 @@ interface BooleanOperatorTree {
   readonly thenRelationship?: ParsedRelationship<'left' | 'right' | 'result'>
 }
 
+class NumberEntity {
+  static #typeUuid = '0f7b46ea-451d-40f2-9a34-3a4530667814';
+
+  readonly previous: NodeId | undefined;
+  readonly id: string;
+
+  constructor(nav: BedrockNavigator, entityId: NodeId) {
+    assert(nav.getTypeOfEntity(entityId) === nav.fromUuid(NumberEntity.#typeUuid));
+    this.id = entityId;
+
+    this.previous = nav.tryGetKnownProperty(entityId, 'previous', new RelationshipSchema({
+      typeId: nav.fromUuid('10037d13-bbd0-4f60-8e47-7b1635e620f4'),
+      fieldNameToId: {
+        target: nav.fromUuid('7edaef67-1e08-4472-95a9-89a212e6504c'),
+        previous: nav.fromUuid('1a3fbabd-02e6-427b-9f46-2c20b16d71e4'),
+      } as const,
+    }));
+  }
+
+  static listEntities(nav: BedrockNavigator) {
+    return nav.findEntitiesByType(nav.fromUuid(NumberEntity.#typeUuid))
+      .map(entityId => new NumberEntity(nav, entityId));
+  }
+}
+
+class NumberLookup {
+  readonly entityIdToValue: Map<NodeId, number>;
+  constructor(nav: BedrockNavigator) {
+    const entityIdToValue = new Map<NodeId, number>();
+    for (const entity of NumberEntity.listEntities(nav)) {
+      let count = -1;
+      let currentEntity: NumberEntity | undefined = entity;
+      // TODO: Extremely inefficient - lower numbers are being re-built instead of being re-used.
+      while (currentEntity !== undefined) {
+        count++;
+        currentEntity = currentEntity.previous === undefined
+          ? undefined
+          : new NumberEntity(nav, currentEntity.previous);
+      }
+
+      entityIdToValue.set(entity.id, count);
+    }
+
+    this.entityIdToValue = entityIdToValue;
+  }
+}
+
 class CompilerCache {
   readonly nav: BedrockNavigator;
+  readonly numberLookup: NumberLookup;
   readonly #processedNodeIds = new Map<NodeId, { inFn: NodeId | undefined }>();
   readonly #inFn: RelationshipData[] = [];
   /** Maps node-ids that have been processed to the functions they are local to when processed. */
   readonly exitRelationshipSchema: RelationshipSchema<'value'>;
-  // readonly andRelationshipSchema: RelationshipSchema<'left' | 'right'>;
   readonly notRelationshipSchema: RelationshipSchema<'operand'>;
   readonly ifThenRelationshipSchema: RelationshipSchema<'left' | 'right' | 'result'>;
   readonly isRelationshipSchema: RelationshipSchema<'left' | 'right' | 'result'>;
@@ -49,6 +96,7 @@ class CompilerCache {
 
   constructor(nav: BedrockNavigator) {
     this.nav = nav;
+    this.numberLookup = new NumberLookup(nav);
 
     this.exitRelationshipSchema = new RelationshipSchema({
       typeId: nav.fromUuid('86b33c24-e4c1-4790-a4d9-1c8af3030b34'),
@@ -56,14 +104,6 @@ class CompilerCache {
         value: nav.fromUuid('381dde34-25e1-4c1b-a3f3-762d9ada9f9c'),
       } as const,
     });
-
-    // this.andRelationshipSchema = new RelationshipSchema({
-    //   typeId: nav.fromUuid('876a450c-778d-44a3-aae4-e4abd21b6cf0'),
-    //   fieldNameToId: {
-    //     left: nav.fromUuid('96a0773b-d697-4397-a83e-c5dccb4287d9'),
-    //     right: nav.fromUuid('46560cd5-7339-4755-86bf-2ec963b6dfec'),
-    //   } as const,
-    // });
 
     this.notRelationshipSchema = new RelationshipSchema({
       typeId: nav.fromUuid('5833f84b-7ec6-4c14-b9b4-6afa554987ce'),
@@ -501,9 +541,11 @@ function compileLiteralAssignment(cc: CompilerCache, nodeId: NodeId): CompiledLi
   if (cc.markAsProcessed(nodeId, { inGlobalScope: true })) return [];
 
   const type = cc.nav.tryGetTypeOfEntity(nodeId);
-  const object = type === undefined
-    ? '{ $repr: "<unknown type>" }'
-    : `{ $repr: "<type:${type.replaceAll('"', '').replaceAll('\\', '')}>" }`;
+  const numericRepresentation = cc.numberLookup.entityIdToValue.get(nodeId);
+  let object: string;
+  if (numericRepresentation !== undefined) object = `{ $repr: "${numericRepresentation}" }`;
+  else if (type === undefined) object = '{ $repr: "<unknown type>" }';
+  else object = `{ $repr: "<type:${type.replaceAll('"', '').replaceAll('\\', '')}>" }`;
 
   return [{
     type: 'statement',

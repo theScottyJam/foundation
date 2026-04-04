@@ -37,18 +37,6 @@ def not {
   // self(operand=false, result=true)
 }
 
-def and {
-  link 876a450c-778d-44a3-aae4-e4abd21b6cf0
-  def left { link 96a0773b-d697-4397-a83e-c5dccb4287d9 isInput(target=self) }
-  def right { link 46560cd5-7339-4755-86bf-2ec963b6dfec isInput(target=self) }
-  def result { isOutput(target=self) }
-
-  // self(left=true, right=true, result=true)
-  // self(left=true, right=false, result=false)
-  // self(left=false, right=true, result=false)
-  // self(left=false, right=false, result=false)
-}
-
 def then {
   link 0c715b0f-0beb-41ea-809a-cbb0a4e4ab4d
   def left { link 2fb3e027-21cd-4dc7-95ec-e73a3956f1f9 isInput(target=self) }
@@ -169,5 +157,4 @@ def sum {
   )
 }
 
-// programExit(value=sum(left=3, right=2)->result)
-programExit(value=sum(left=3, right=0)->result)
+programExit(value=sum(left=3, right=2)->result)
